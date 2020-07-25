@@ -3,7 +3,7 @@
 # The directory to your dataset
 # The data must be organized as /path/to/dataset/your_video_name/src/%010d.png, start from id=0
 # We use png to avoid error caused by jpeg compression
-data_dir: /tank/new_dataset/
+data_dir: /data/sheric/videos/
 #
 # Set the default value of parameters here
 # All the parameters here will be forwarded to each instance
@@ -80,7 +80,5 @@ instances:
   rpn_enlarge_ratio: 0.0
   # control the size of the object
   size_obj: 0.01
-  # hname must be specified if in implementation mode
-  hname: 127.0.0.1:5001
   # mode can be emulation or implementation, mode==emulation if not specified
-  mode: implementation
+  mode: emulation

@@ -1,6 +1,7 @@
 import re
 import os
 import csv
+import rectpack
 import shutil
 import subprocess
 import numpy as np
@@ -58,6 +59,13 @@ class Region:
                       f"{self.w:0.3f}, {self.h:0.3f}, {self.conf:0.3f}, "
                       f"{self.label}, {self.origin}")
         return string_rep
+
+    # these two are just so I can use regions as keys in dict
+    def __hash__(self):
+        return hash((self.fid, self.x, self.y, self.w, self.h))
+
+    def __eq__(self, other):
+        return (self.fid, self.x, self.y, self.w, self.h) == (other.fix, other.x, other.y, other.w, other.h)
 
     def is_same(self, region_to_check, threshold=0.5):
         # If the fids or labels are different
@@ -596,7 +604,8 @@ def extract_images_from_video(images_path, req_regions):
                   os.path.join(images_path, f"{str(fid).zfill(10)}.png"))
 
 
-def crop_images(results, vid_name, images_direc, resolution=None):
+def crop_images(results, vid_name, images_direc, resolution=None,
+                orig_to_move=None):
     cached_image = None
     cropped_images = {}
 
@@ -607,24 +616,37 @@ def crop_images(results, vid_name, images_direc, resolution=None):
                                       f"{str(region.fid).zfill(10)}.png")
             cached_image = (region.fid, cv.imread(image_path))
 
+        if orig_to_move is None:
+            f_idx = region.fid
+            r_x = region.x
+            r_y = region.y
+        else:
+            f_idx = orig_to_move[region].fid
+            r_x = orig_to_move[region].x
+            r_y = orig_to_move[region].y
+        
         # Just move the complete image
-        if region.x == 0 and region.y == 0 and region.w == 1 and region.h == 1:
-            cropped_images[region.fid] = cached_image[1]
+        if r_x == 0 and r_y == 0 and region.w == 1 and region.h == 1:
+            cropped_images[f_idx] = cached_image[1]
             continue
 
         width = cached_image[1].shape[1]
         height = cached_image[1].shape[0]
-        x0 = int(region.x * width)
-        y0 = int(region.y * height)
-        x1 = int((region.w * width) + x0 - 1)
-        y1 = int((region.h * height) + y0 - 1)
+        x0_move = int(r_x * width)
+        y0_move = int(r_y * height)
+        x1_move = int((region.w * width) + x0_move - 1)
+        y1_move = int((region.h * height) + y0_move - 1)
+        x0_orig = int(region.x * width)
+        y0_orig = int(region.y * height)
+        x1_orig = int((region.w * width) + x0_orig - 1)
+        y1_orig = int((region.h * height) + y0_orig - 1)
 
         if region.fid not in cropped_images:
-            cropped_images[region.fid] = np.zeros_like(cached_image[1])
+            cropped_images[f_idx] = np.zeros_like(cached_image[1])
 
-        cropped_image = cropped_images[region.fid]
-        cropped_image[y0:y1, x0:x1, :] = cached_image[1][y0:y1, x0:x1, :]
-        cropped_images[region.fid] = cropped_image
+        cropped_image = cropped_images[f_idx]
+        cropped_image[y0_move:y1_move, x0_move:x1_move, :] = cached_image[1][y0_orig:y1_orig, x0_orig:x1_orig, :]
+        cropped_images[f_idx] = cropped_image
 
     os.makedirs(vid_name, exist_ok=True)
     frames_count = len(cropped_images)
@@ -675,14 +697,101 @@ def merge_images(cropped_images_direc, low_images_direc, req_regions):
     return images
 
 
+def combine_regions_map(results):
+    frame_regions = list(results.regions_dict.items())
+    frame_regions.sort(key=lambda x: x[0])
+    frame_regions = list(zip(*frame_regions))[1]
+
+    orig_to_move = {}
+    move_to_orig = {}
+    move_regions = Results()
+
+    new_fid = 0
+
+    # go by 2 frames
+    for i in range(0, len(frame_regions), 2):
+    
+        to_combine = frame_regions[i:i+2]
+        
+        # don't move anything if only one frame
+        if len(to_combine) == 1:
+            for region in to_combine[0]:
+                new_region = region.copy()
+                new_region.fid = new_fid
+                orig_to_move[region] = new_region
+                move_to_orig[new_region] = region
+                move_regions.add_single_result(new_region)
+                #print(str(new_region))
+            new_fid += 1
+
+        else:
+            combine_regions = []
+            for regions in to_combine:
+                combine_regions.extend(regions)
+            dec_rects = [(rectpack.float2dec(r.w, 5), rectpack.float2dec(r.h, 5)) for r in combine_regions]
+            bins = [(rectpack.float2dec(1, 5), rectpack.float2dec(1, 5)) for i in range(2)]
+
+            packer = rectpack.newPacker()
+            for idx, r in enumerate(dec_rects):
+                packer.add_rect(*r, rid=idx)
+            for idx, b in enumerate(bins):
+                packer.add_bin(*b, bid=idx)
+
+            packer.pack()
+
+            # process packed rectangles
+            max_b = 0
+            
+            all_rects = packer.rect_list()
+            for rect in all_rects:
+                b, x, y, w, h, rid = rect
+
+                float_x = float(x / (rectpack.float2dec(1, 5)))
+                float_y = float(y / (rectpack.float2dec(1, 5)))
+            
+                orig_region = combine_regions[rid]
+
+                new_region = orig_region.copy()
+                new_region.x = float_x
+                new_region.y = float_y
+                new_region.fid = new_fid + b
+
+                #print(str(new_region))
+
+                orig_to_move[orig_region] = new_region
+                move_to_orig[new_region] = orig_region
+                move_regions.add_single_result(new_region)
+                
+                max_b = max(b, max_b)
+
+            #print('Combined into %d frames' % (max_b + 1))
+
+            new_fid += max_b + 1
+
+    return orig_to_move, move_to_orig, move_regions
+
+
+def convert_move_results(move_results, move_to_orig):
+    orig_results = Results()
+
+#    for region in move_results.regions:
+    #    print(str(region))
+    #    orig_region = move_to_orig[region].copy()
+    #    orig_region.label = region.label
+    #    orig_results.add_single_result(orig_region)
+
+    return orig_results
+
+
 def compute_regions_size(results, vid_name, images_direc, resolution, qp,
-                         enforce_iframes, estimate_banwidth=True):
+                         enforce_iframes, estimate_banwidth=True,
+                         orig_to_move=None):
     if estimate_banwidth:
         # If not simulation, compress and encode images
         # and get size
         vid_name = f"{vid_name}-cropped"
         frames_count = crop_images(results, vid_name, images_direc,
-                                   resolution)
+                                   resolution, orig_to_move)
 
         size = compress_and_get_size(vid_name, 0, frames_count, qp=qp,
                                      enforce_iframes=enforce_iframes,

@@ -5,7 +5,8 @@ import requests
 import json
 from dds_utils import (Results, read_results_dict, cleanup, Region,
                        compute_regions_size, extract_images_from_video,
-                       merge_boxes_in_results)
+                       merge_boxes_in_results, combine_regions_map,
+                       convert_move_results)
 import yaml
 
 
@@ -135,19 +136,22 @@ class Client:
 
             # High resolution phase
             if len(req_regions) > 0:
+                orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions)
                 # Crop, compress and get size
                 regions_size, _ = compute_regions_size(
                     req_regions, video_name, high_images_path,
                     self.config.high_resolution, self.config.high_qp,
-                    enforce_iframes, True)
+                    enforce_iframes, True, orig_to_move)
                 self.logger.info(f"Sent {len(req_regions)} regions which have "
                                  f"{regions_size / 1024}KB in second phase "
                                  f"using {self.config.high_qp}")
                 total_size[1] += regions_size
 
                 # High resolution phase every three filter
-                r2 = self.server.emulate_high_query(
-                    video_name, low_images_path, req_regions)
+                move_r2 = self.server.emulate_high_query(
+                          video_name, low_images_path, move_regions)
+#                r2 = convert_move_results(move_r2, move_to_orig)
+                r2 = move_r2
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch")
 
@@ -211,7 +215,7 @@ class Client:
 
         return results, rpn
 
-    def get_second_phase_results(self, vid_name):
+    def get_second_phase_results(self, vid_name, move_to_orig):
         encoded_vid_path = os.path.join(vid_name + "-cropped", "temp.mp4")
         video_to_send = {"media": open(encoded_vid_path, "rb")}
         response = self.session.post(
@@ -220,10 +224,14 @@ class Client:
 
         results = Results()
         for region in response_json["results"]:
-            results.append(Region.convert_from_server_response(
-                region, self.config.high_resolution, "high-res"))
+            res_region = Region.convert_from_server_response(
+                region, self.config_high_resolution, "high-res")
+            orig_region = move_to_orig[res_region]
+            orig_region.label = res_region.label
+            results.append(orig_region)
 
         return results
+
 
     def analyze_video(
             self, vid_name, raw_images, config, enforce_iframes):
@@ -261,15 +269,16 @@ class Client:
 
             # Second Iteration
             if len(rpn_regions) > 0:
+                orig_to_move, move_to_orig, move_regions = combine_regions_map(rpn_regions)
                 batch_video_size, _ = compute_regions_size(
                     rpn_regions, vid_name, raw_images,
                     self.config.high_resolution, self.config.high_qp,
-                    enforce_iframes, True)
+                    enforce_iframes, True, orig_to_move)
                 high_phase_size += batch_video_size
                 self.logger.info(f"{batch_video_size / 1024}KB sent in second "
                                  f"phase. Using QP {self.config.high_qp} and "
                                  f"Resolution {self.config.high_resolution}.")
-                results = self.get_second_phase_results(vid_name)
+                results = self.get_second_phase_results(vid_name, move_to_orig)
                 final_results.combine_results(
                     results, self.config.intersection_threshold)
 
