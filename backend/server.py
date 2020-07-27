@@ -49,7 +49,7 @@ class Server:
         rpn_regions = Results()
 
         if fnames is None:
-            fnames = sorted(os.listdir(images_direc))
+            fnames = [fname for fname in sorted(os.listdir(images_direc)) if "png" in fname]
         self.logger.info(f"Running inference on {len(fnames)} frames")
         for fname in fnames:
             if "png" not in fname:
@@ -60,6 +60,7 @@ class Server:
                 image = images[fid]
             else:
                 image_path = os.path.join(images_direc, fname)
+                print(image_path)
                 image = cv.imread(image_path)
             image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
@@ -159,6 +160,8 @@ class Server:
 
     def emulate_high_query(self, vid_name, low_images_direc, req_regions):
         images_direc = vid_name + "-cropped"
+        print(images_direc)
+        print(len(req_regions))
         # Extract images from encoded video
         extract_images_from_video(images_direc, req_regions)
 
@@ -175,12 +178,13 @@ class Server:
         for img in fnames:
             shutil.copy(os.path.join(images_direc, img), merged_images_direc)
 
-        merged_images = merge_images(
-            merged_images_direc, low_images_direc, req_regions)
+        #merged_images = merge_images(
+        #    merged_images_direc, low_images_direc, req_regions)
         results, _ = self.perform_detection(
-            merged_images_direc, self.config.high_resolution, fnames,
-            merged_images)
+            images_direc, self.config.high_resolution, None,
+            None)
 
+        print(len(results))
         results_with_detections_only = Results()
         for r in results.regions:
             if r.label == "no obj":

@@ -641,7 +641,7 @@ def crop_images(results, vid_name, images_direc, resolution=None,
         x1_orig = int((region.w * width) + x0_orig - 1)
         y1_orig = int((region.h * height) + y0_orig - 1)
 
-        if region.fid not in cropped_images:
+        if f_idx not in cropped_images:
             cropped_images[f_idx] = np.zeros_like(cached_image[1])
 
         cropped_image = cropped_images[f_idx]
@@ -698,6 +698,9 @@ def merge_images(cropped_images_direc, low_images_direc, req_regions):
 
 
 def combine_regions_map(results):
+    DEC_PLACES = 20
+    ENTIRE_FRAME = rectpack.float2dec(1, DEC_PLACES)
+    
     frame_regions = list(results.regions_dict.items())
     frame_regions.sort(key=lambda x: x[0])
     frame_regions = list(zip(*frame_regions))[1]
@@ -720,18 +723,18 @@ def combine_regions_map(results):
                 new_region.fid = new_fid
                 orig_to_move[region] = new_region
                 move_to_orig[new_region] = region
-                move_regions.add_single_result(new_region)
-                #print(str(new_region))
+                move_regions.append(new_region)
+                print(str(new_region))
             new_fid += 1
 
         else:
             combine_regions = []
             for regions in to_combine:
                 combine_regions.extend(regions)
-            dec_rects = [(rectpack.float2dec(r.w, 5), rectpack.float2dec(r.h, 5)) for r in combine_regions]
-            bins = [(rectpack.float2dec(1, 5), rectpack.float2dec(1, 5)) for i in range(2)]
+            dec_rects = [(rectpack.float2dec(r.w, DEC_PLACES), rectpack.float2dec(r.h, DEC_PLACES)) for r in combine_regions]
+            bins = [(ENTIRE_FRAME, ENTIRE_FRAME) for i in range(2)]
 
-            packer = rectpack.newPacker()
+            packer = rectpack.newPacker(rotation=False)
             for idx, r in enumerate(dec_rects):
                 packer.add_rect(*r, rid=idx)
             for idx, b in enumerate(bins):
@@ -746,8 +749,8 @@ def combine_regions_map(results):
             for rect in all_rects:
                 b, x, y, w, h, rid = rect
 
-                float_x = float(x / (rectpack.float2dec(1, 5)))
-                float_y = float(y / (rectpack.float2dec(1, 5)))
+                float_x = float(x / ENTIRE_FRAME)
+                float_y = float(y / ENTIRE_FRAME)
             
                 orig_region = combine_regions[rid]
 
@@ -756,11 +759,11 @@ def combine_regions_map(results):
                 new_region.y = float_y
                 new_region.fid = new_fid + b
 
-                #print(str(new_region))
+                print(str(new_region))
 
                 orig_to_move[orig_region] = new_region
                 move_to_orig[new_region] = orig_region
-                move_regions.add_single_result(new_region)
+                move_regions.append(new_region)
                 
                 max_b = max(b, max_b)
 
@@ -774,8 +777,8 @@ def combine_regions_map(results):
 def convert_move_results(move_results, move_to_orig):
     orig_results = Results()
 
-#    for region in move_results.regions:
-    #    print(str(region))
+    for region in move_results.regions:
+        print(str(region))
     #    orig_region = move_to_orig[region].copy()
     #    orig_region.label = region.label
     #    orig_results.add_single_result(orig_region)

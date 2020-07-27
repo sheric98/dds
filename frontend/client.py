@@ -150,7 +150,7 @@ class Client:
                 # High resolution phase every three filter
                 move_r2 = self.server.emulate_high_query(
                           video_name, low_images_path, move_regions)
-#                r2 = convert_move_results(move_r2, move_to_orig)
+                r2 = convert_move_results(move_r2, move_to_orig)
                 r2 = move_r2
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch")
