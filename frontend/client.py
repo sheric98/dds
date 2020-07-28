@@ -6,7 +6,7 @@ import json
 from dds_utils import (Results, read_results_dict, cleanup, Region,
                        compute_regions_size, extract_images_from_video,
                        merge_boxes_in_results, combine_regions_map,
-                       convert_move_results)
+                       convert_move_results, draw_bounding_boxes)
 import yaml
 
 
@@ -136,7 +136,8 @@ class Client:
 
             # High resolution phase
             if len(req_regions) > 0:
-                orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions)
+                orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
+                                                                               padding=0.05)
                 # Crop, compress and get size
                 regions_size, _ = compute_regions_size(
                     req_regions, video_name, high_images_path,
@@ -160,6 +161,10 @@ class Client:
                 final_results.combine_results(
                     r2, self.config.intersection_threshold)
 
+                if debug_mode:
+                    draw_bounding_boxes(move_r2, video_name, start_fid, end_fid)
+                exit()
+            
             # Cleanup for the next batch
             cleanup(video_name, debug_mode, start_fid, end_fid)
 

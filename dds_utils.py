@@ -697,7 +697,7 @@ def merge_images(cropped_images_direc, low_images_direc, req_regions):
     return images
 
 
-def combine_regions_map(results):
+def combine_regions_map(results, padding=0, grouping=2):
     DEC_PLACES = 20
     ENTIRE_FRAME = rectpack.float2dec(1, DEC_PLACES)
     
@@ -711,10 +711,12 @@ def combine_regions_map(results):
 
     new_fid = 0
 
-    # go by 2 frames
-    for i in range(0, len(frame_regions), 2):
+    if not grouping:
+        grouping = len(frame_regions)
+
+    for i in range(0, len(frame_regions), grouping):
     
-        to_combine = frame_regions[i:i+2]
+        to_combine = frame_regions[i:i+grouping]
         
         # don't move anything if only one frame
         if len(to_combine) == 1:
@@ -731,26 +733,33 @@ def combine_regions_map(results):
             combine_regions = []
             for regions in to_combine:
                 combine_regions.extend(regions)
-            dec_rects = [(rectpack.float2dec(r.w, DEC_PLACES), rectpack.float2dec(r.h, DEC_PLACES)) for r in combine_regions]
-            bins = [(ENTIRE_FRAME, ENTIRE_FRAME) for i in range(2)]
+            
+            dec_rects = []
+            for r in combine_regions:
+                pad_w = r.w + 2*padding
+                pad_h = r.h + 2*padding
+                if pad_w > 1:
+                    pad_w = 1
+                if pad_h > 1:
+                    pad_h = 1
+                rect_tuple = (rectpack.float2dec(pad_w, DEC_PLACES), rectpack.float2dec(pad_h, DEC_PLACES))
+                dec_rects.append(rect_tuple)
 
             packer = rectpack.newPacker(rotation=False)
             for idx, r in enumerate(dec_rects):
                 packer.add_rect(*r, rid=idx)
-            for idx, b in enumerate(bins):
-                packer.add_bin(*b, bid=idx)
+            packer.add_bin(ENTIRE_FRAME, ENTIRE_FRAME, count=float('inf'))
 
             packer.pack()
 
             # process packed rectangles
-            max_b = 0
             
             all_rects = packer.rect_list()
             for rect in all_rects:
                 b, x, y, w, h, rid = rect
 
-                float_x = float(x / ENTIRE_FRAME)
-                float_y = float(y / ENTIRE_FRAME)
+                float_x = float(x / ENTIRE_FRAME) + padding
+                float_y = float(y / ENTIRE_FRAME) + padding
             
                 orig_region = combine_regions[rid]
 
@@ -764,12 +773,10 @@ def combine_regions_map(results):
                 orig_to_move[orig_region] = new_region
                 move_to_orig[new_region] = orig_region
                 move_regions.append(new_region)
-                
-                max_b = max(b, max_b)
 
-            #print('Combined into %d frames' % (max_b + 1))
+            #print('Combined into %d frames' % len(packer))
 
-            new_fid += max_b + 1
+            new_fid += len(packer)
 
     return orig_to_move, move_to_orig, move_regions
 
@@ -805,6 +812,15 @@ def compute_regions_size(results, vid_name, images_direc, resolution, qp,
         size = compute_area_of_regions(results)
 
         return size
+
+
+def draw_bounding_boxes(results, vid_name, start_id, end_id):
+    os.makedirs("debugging", exist_ok=True)
+    vid_name_end = vid_name.split('/')[-1]
+    save_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-bb_drawn')
+    res_path = vid_name + '-cropped'
+    visualize_regions(results, res_path, save=True)
+    shutil.copytree(res_path, save_path)
 
 
 def cleanup(vid_name, debug_mode=False, start_id=None, end_id=None):
@@ -991,7 +1007,7 @@ def write_stats(fname, vid_name, config, f1, stats, bw,
 
 def visualize_regions(results, images_direc,
                       low_conf=0.0, high_conf=1.0,
-                      label="debugging"):
+                      label="debugging", save=False):
     idx = 0
     fids = sorted(list(set([r.fid for r in results.regions])))
     while idx < len(fids):
@@ -1008,17 +1024,22 @@ def visualize_regions(results, images_direc,
             x1 = int(r.w * width + x0)
             y1 = int(r.h * height + y0)
             cv.rectangle(image_np, (x0, y0), (x1, y1), (0, 0, 255), 2)
-        cv.putText(image_np, f"{fids[idx]}", (10, 20),
+        if save:
+            cv.imwrite(
+                os.path.join(images_direc, f"{str(fids[idx]).zfill(10)}.png"), image_np)
+        else:
+            cv.putText(image_np, f"{fids[idx]}", (10, 20),
                    cv.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
-        cv.imshow(label, image_np)
-        key = cv.waitKey()
-        if key & 0xFF == ord("q"):
-            break
-        elif key & 0xFF == ord("k"):
-            idx -= 2
+            cv.imshow(label, image_np)
+            key = cv.waitKey()
+            if key & 0xFF == ord("q"):
+                break
+            elif key & 0xFF == ord("k"):
+                idx -= 2
 
         idx += 1
-    cv.destroyAllWindows()
+    if not save:
+        cv.destroyAllWindows()
 
 
 def visualize_single_regions(region, images_direc, label="debugging"):
