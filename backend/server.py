@@ -44,7 +44,7 @@ class Server:
             os.remove(os.path.join("server_temp-cropped", f))
 
     def perform_detection(self, images_direc, resolution, fnames=None,
-                          images=None):
+                          images=None, high=False):
         final_results = Results()
         rpn_regions = Results()
 
@@ -54,7 +54,7 @@ class Server:
         for fname in fnames:
             if "png" not in fname:
                 continue
-            fid = int(fname.split(".")[0])
+            fid = int(fname.split('_')[0]) if high else int(fname.split(".")[0])
             image = None
             if images:
                 image = images[fid]
@@ -158,12 +158,11 @@ class Server:
 
         return detections, regions_to_query
 
-    def emulate_high_query(self, vid_name, low_images_direc, req_regions):
+    def emulate_high_query(self, vid_name, low_images_direc, req_regions,
+                           move_to_orig, context=0):
         images_direc = vid_name + "-cropped"
-        print(images_direc)
-        print(len(req_regions))
         # Extract images from encoded video
-        extract_images_from_video(images_direc, req_regions)
+        extract_images_from_video(images_direc, req_regions, move_to_orig)
 
         if not os.path.isdir(images_direc):
             self.logger.error("Images directory was not found but the "
@@ -178,13 +177,13 @@ class Server:
         for img in fnames:
             shutil.copy(os.path.join(images_direc, img), merged_images_direc)
 
-        #merged_images = merge_images(
-        #    merged_images_direc, low_images_direc, req_regions)
+        merged_images = merge_images(
+            merged_images_direc, low_images_direc, req_regions,
+            move_to_orig, context)
         results, _ = self.perform_detection(
-            images_direc, self.config.high_resolution, None,
-            None)
+            images_direc, self.config.high_resolution, fnames,
+            merged_images, True)
 
-        print(len(results))
         results_with_detections_only = Results()
         for r in results.regions:
             if r.label == "no obj":

@@ -564,7 +564,7 @@ def compress_and_get_size(images_path, start_id, end_id, qp,
     return size
 
 
-def extract_images_from_video(images_path, req_regions):
+def extract_images_from_video(images_path, req_regions, move_to_orig=None):
     if not os.path.isdir(images_path):
         return
 
@@ -593,16 +593,42 @@ def extract_images_from_video(images_path, req_regions):
     fnames = sorted(
         [os.path.join(images_path, name)
          for name in os.listdir(images_path) if "png" in name])
-    fids = sorted(list(set([r.fid for r in req_regions.regions])))
-    fids_mapping = zip(fids, fnames)
+    
+    if move_to_orig is None:
+        fids = sorted(list(set([r.fid for r in req_regions.regions])))
+        fids_mapping = zip(fids, fnames)
+
+    else:
+        move_to_orig_fids = {}
+
+        for region in req_regions.regions:
+            fid = str(region.fid)
+            orig_fid = str(move_to_orig[region].fid)
+            if fid not in move_to_orig_fids:
+                move_to_orig_fids[fid] = set()
+            move_to_orig_fids[fid].add(orig_fid)
+        
+        for key, item in move_to_orig_fids.items():
+            orig_list = sorted([orig_fid for orig_fid in item])
+            png_name = '_'.join(orig_list)
+
+            move_to_orig_fids[key] = png_name
+
+        pairs = list(move_to_orig_fids.items())
+        pairs.sort(key=lambda x: x[0])
+        fids_mapping = zip(pairs, fnames)
+
     for fname in fnames:
         # Rename temporarily
         os.rename(fname, f"{fname}_temp")
 
-    for fid, fname in fids_mapping:
-        os.rename(os.path.join(f"{fname}_temp"),
-                  os.path.join(images_path, f"{str(fid).zfill(10)}.png"))
-
+    for x, fname in fids_mapping:
+        if move_to_orig is None:
+            os.rename(os.path.join(f"{fname}_temp"),
+                      os.path.join(images_path, f"{str(x).zfill(10)}.png"))
+        else:
+            os.rename(os.path.join(f"{fname}_temp"),
+                      os.path.join(images_path, f"{x[0] + '_' + x[1]}.png"))
 
 def crop_images(results, vid_name, images_direc, resolution=None,
                 orig_to_move=None):
@@ -664,40 +690,89 @@ def crop_images(results, vid_name, images_direc, resolution=None,
     return frames_count
 
 
-def merge_images(cropped_images_direc, low_images_direc, req_regions):
+def merge_images(cropped_images_direc, low_images_direc, req_regions,
+                 move_to_orig, context):
     images = {}
     for fname in os.listdir(cropped_images_direc):
         if "png" not in fname:
             continue
-        fid = int(fname.split(".")[0])
+        fids_str = fname.split('.')[0]
+        fids_full_split = fids_str.split('_')
+        fid_idx = int(fids_full_split[0])
+        fids = fids_full_split[1:]
 
         # Read high resolution image
         high_image = cv.imread(os.path.join(cropped_images_direc, fname))
+        high_copy = high_image[:, :, :]
         width = high_image.shape[1]
         height = high_image.shape[0]
 
         # Read low resolution image
-        low_image = cv.imread(os.path.join(low_images_direc, fname))
-        # Enlarge low resolution image
-        enlarged_image = cv.resize(low_image, (width, height), fx=0, fy=0,
-                                   interpolation=cv.INTER_CUBIC)
+        low_images_dict = {}
+        for fid in fids:
+            fid_int = int(fid)
+            fid_name = fid.zfill(10) + ".png"
+            low_image = cv.imread(os.path.join(low_images_direc, fid_name))
+            # enlarge low resolution image
+            enlarged_image = cv.resize(low_image, (width, height), fx=0, fy=0,
+                                       interpolation=cv.INTER_CUBIC)
+            low_images_dict[fid_int] = enlarged_image
+
         # Put regions in place
-        for r in req_regions.regions:
-            if fid != r.fid:
-                continue
+        regions = req_regions.regions_dict[fid_idx]
+        for r in regions:
+            orig_r = move_to_orig[r]
+            low_image = low_images_dict[orig_r.fid]
+
+            c = []
+
+            for region in [orig_r, r]:
+
+                context_x = max(region.x - context, 0)
+                context_y = max(region.y - context, 0)
+                context_x_end = min(region.x + region.w + context, 1)
+                context_y_end = min(region.y + region.h + context, 1)
+
+                context_x0 = int(context_x * width)
+                context_y0 = int(context_y * height)
+                context_x1 = int(context_x_end * width - 1)
+                context_y1 = int(context_y_end * height - 1)
+
+                c.append([context_x0, context_x1, context_y0, context_y1])
+            
+            # make sure widths and heights are the same
+            orig_w = c[0][1] - c[0][0]
+            r_w = c[1][1] - c[1][0]
+            orig_h = c[0][3] - c[0][2]
+            r_h = c[1][3] - c[1][2]
+
+            if orig_w < r_w:
+                c[1][1] = c[1][0] + orig_w
+            elif r_w < orig_w:
+                c[0][1] = c[0][0] + r_w
+            
+            if orig_h < r_h:
+                c[1][3] = c[1][2] + orig_h
+            elif r_h < orig_h:
+                c[0][3] = c[0][2] + r_h
+
+
             x0 = int(r.x * width)
             y0 = int(r.y * height)
             x1 = int((r.w * width) + x0 - 1)
             y1 = int((r.h * height) + y0 - 1)
 
-            enlarged_image[y0:y1, x0:x1, :] = high_image[y0:y1, x0:x1, :]
-        cv.imwrite(os.path.join(cropped_images_direc, fname), enlarged_image,
+            high_image[c[1][2]:c[1][3], c[1][0]:c[1][1], :] =\
+                low_image[c[0][2]:c[0][3], c[0][0]:c[0][1], :]
+            high_image[y0:y1, x0:x1, :] = high_copy[y0:y1, x0:x1, :]
+
+        cv.imwrite(os.path.join(cropped_images_direc, fname), high_image,
                    [cv.IMWRITE_PNG_COMPRESSION, 0])
-        images[fid] = enlarged_image
+        images[fid_idx] = high_image
     return images
 
 
-def combine_regions_map(results, padding=0, grouping=2):
+def combine_regions_map(results, padding=0, context=0, grouping=2):
     DEC_PLACES = 20
     ENTIRE_FRAME = rectpack.float2dec(1, DEC_PLACES)
     
@@ -736,8 +811,8 @@ def combine_regions_map(results, padding=0, grouping=2):
             
             dec_rects = []
             for r in combine_regions:
-                pad_w = r.w + 2*padding
-                pad_h = r.h + 2*padding
+                pad_w = r.w + 2*(padding + context)
+                pad_h = r.h + 2*(padding + context)
                 if pad_w > 1:
                     pad_w = 1
                 if pad_h > 1:
@@ -758,8 +833,8 @@ def combine_regions_map(results, padding=0, grouping=2):
             for rect in all_rects:
                 b, x, y, w, h, rid = rect
 
-                float_x = float(x / ENTIRE_FRAME) + padding
-                float_y = float(y / ENTIRE_FRAME) + padding
+                float_x = float(x / ENTIRE_FRAME) + padding + context
+                float_y = float(y / ENTIRE_FRAME) + padding + context
             
                 orig_region = combine_regions[rid]
 
@@ -819,7 +894,7 @@ def draw_bounding_boxes(results, vid_name, start_id, end_id):
     vid_name_end = vid_name.split('/')[-1]
     save_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-bb_drawn')
     res_path = vid_name + '-cropped'
-    visualize_regions(results, res_path, save=True)
+    visualize_regions(results, res_path, save=True, high=True)
     shutil.copytree(res_path, save_path)
 
 
@@ -1007,16 +1082,25 @@ def write_stats(fname, vid_name, config, f1, stats, bw,
 
 def visualize_regions(results, images_direc,
                       low_conf=0.0, high_conf=1.0,
-                      label="debugging", save=False):
-    idx = 0
-    fids = sorted(list(set([r.fid for r in results.regions])))
-    while idx < len(fids):
+                      label="debugging", save=False,
+                      high=False):
+    fids = set([r.fid for r in results.regions])
+    for fname in os.listdir(images_direc):
+        if "png" not in fname:
+            continue
+        if high:
+            fid = int(fname.split('_')[0])
+        else:
+            fid = int(fname.split('.')[0])
+        if fid not in fids:
+            continue
         image_np = cv.imread(
-            os.path.join(images_direc, f"{str(fids[idx]).zfill(10)}.png"))
+            os.path.join(images_direc, fname))
         width = image_np.shape[1]
         height = image_np.shape[0]
-        regions = [r for r in results.regions if r.fid == fids[idx]]
+        regions = results.regions_dict[fid]
         for r in regions:
+            print('hi')
             if r.conf < low_conf or r.conf > high_conf:
                 continue
             x0 = int(r.x * width)
@@ -1026,9 +1110,9 @@ def visualize_regions(results, images_direc,
             cv.rectangle(image_np, (x0, y0), (x1, y1), (0, 0, 255), 2)
         if save:
             cv.imwrite(
-                os.path.join(images_direc, f"{str(fids[idx]).zfill(10)}.png"), image_np)
+                os.path.join(images_direc, fname), image_np)
         else:
-            cv.putText(image_np, f"{fids[idx]}", (10, 20),
+            cv.putText(image_np, f"{fid}", (10, 20),
                    cv.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
             cv.imshow(label, image_np)
             key = cv.waitKey()
@@ -1037,7 +1121,6 @@ def visualize_regions(results, images_direc,
             elif key & 0xFF == ord("k"):
                 idx -= 2
 
-        idx += 1
     if not save:
         cv.destroyAllWindows()
 

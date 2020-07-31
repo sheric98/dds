@@ -89,6 +89,8 @@ class Client:
     def analyze_video_emulate(self, video_name, high_images_path,
                               enforce_iframes, low_results_path=None,
                               debug_mode=False):
+        CONTEXT = 0.01
+        
         final_results = Results()
         low_phase_results = Results()
         high_phase_results = Results()
@@ -137,7 +139,8 @@ class Client:
             # High resolution phase
             if len(req_regions) > 0:
                 orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
-                                                                               padding=0.05)
+                                                                               padding=0.02,
+                                                                               context=CONTEXT)
                 # Crop, compress and get size
                 regions_size, _ = compute_regions_size(
                     req_regions, video_name, high_images_path,
@@ -150,7 +153,7 @@ class Client:
 
                 # High resolution phase every three filter
                 move_r2 = self.server.emulate_high_query(
-                          video_name, low_images_path, move_regions)
+                          video_name, low_images_path, move_regions, move_to_orig, CONTEXT)
                 r2 = convert_move_results(move_r2, move_to_orig)
                 r2 = move_r2
                 self.logger.info(f"Got {len(r2)} results in second phase "
