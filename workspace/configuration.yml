@@ -80,5 +80,86 @@ instances:
   rpn_enlarge_ratio: 0.0
   # control the size of the object
   size_obj: 0.01
+  # context low-res background to add
+  context: 0.025
+  # padding of blank background
+  padding: 0
+  # normalize background color
+  normalize: False
+  # mode can be emulation or implementation, mode==emulation if not specified
+  mode: emulation
+
+  # another one no context
+- batch_size: 15
+  # the configuration for the Stream A (low) and Stream B (high)
+  high_qp: 26
+  high_resolution: 0.8
+  low_qp: 36
+  low_resolution: 0.8
+  method: dds
+  # Two regions will be treated as the same region if the intersection-over-union (IoU) is larger than this threshold
+  objfilter_iou: 0.3
+  # The score to prune out those low-objectness-score regions. Just to control the bandwidth
+  prune_score: 0.5
+  # Deprecated parameter
+  rpn_enlarge_ratio: 0.0
+  # control the size of the object
+  size_obj: 0.01
+  # context low-res background to add
+  context: 0
+  # padding of blank background
+  padding: 0.025
+  # normalize background color
+  normalize: False
+  # mode can be emulation or implementation, mode==emulation if not specified
+  mode: emulation
+
+  # another one context with normalization
+- batch_size: 15
+  # the configuration for the Stream A (low) and Stream B (high)
+  high_qp: 26
+  high_resolution: 0.8
+  low_qp: 36
+  low_resolution: 0.8
+  method: dds
+  # Two regions will be treated as the same region if the intersection-over-union (IoU) is larger than this threshold
+  objfilter_iou: 0.3
+  # The score to prune out those low-objectness-score regions. Just to control the bandwidth
+  prune_score: 0.5
+  # Deprecated parameter
+  rpn_enlarge_ratio: 0.0
+  # control the size of the object
+  size_obj: 0.01
+  # context low-res background to add
+  context: 0.025
+  # padding of blank background
+  padding: 0
+  # normalize background color
+  normalize: True
+  # mode can be emulation or implementation, mode==emulation if not specified
+  mode: emulation
+
+  # just padding with normalization
+- batch_size: 15
+  # the configuration for the Stream A (low) and Stream B (high)
+  high_qp: 26
+  high_resolution: 0.8
+  low_qp: 36
+  low_resolution: 0.8
+  method: dds
+  # Two regions will be treated as the same region if the intersection-over-union (IoU) is larger than this threshold
+  objfilter_iou: 0.3
+  # The score to prune out those low-objectness-score regions. Just to control the bandwidth
+  prune_score: 0.5
+  # Deprecated parameter
+  rpn_enlarge_ratio: 0.0
+  # control the size of the object
+  size_obj: 0.01
+  # context low-res background to add
+  context: 0
+  # padding of blank background
+  padding: 0.025
+  # normalize background color
+  normalize: True
   # mode can be emulation or implementation, mode==emulation if not specified
   mode: emulation

@@ -88,12 +88,16 @@ def execute_single(single_instance):
         prune_score = single_instance['prune_score']
         objfilter_iou = single_instance['objfilter_iou']
         size_obj = single_instance['size_obj']
+        context = single_instance['context']
+        padding = single_instance['padding']
+        normalized = '_normalized' if single_instance['normalize'] else ''
 
         # skip if result file already exists
         # You could customize the way to serialize the parameters into filename by yourself
         result_file_name = (f"{video_name}_dds_{low_res}_{high_res}_{low_qp}_{high_qp}_"
                             f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
-                            f"{prune_score}_{objfilter_iou}_{size_obj}")
+                            f"{prune_score}_{objfilter_iou}_{size_obj}_"
+                            f"{context}_{padding}{normalized}")
         if single_instance['overwrite'] == False and os.path.exists(os.path.join("results", result_file_name)):
             print(f"Skipping {result_file_name}")
         else:
@@ -143,7 +147,7 @@ def execute_all(config_info):
     """
     all_instances = config_info['instances']
     default = config_info['default']
-
+    print('found %d instances' % (len(all_instances)))
     for single_instance in all_instances:
 
         # propagate default config to current instance

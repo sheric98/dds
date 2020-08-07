@@ -4,7 +4,8 @@ import logging
 import cv2 as cv
 from dds_utils import (Results, Region, calc_iou, merge_images,
                        extract_images_from_video, merge_boxes_in_results,
-                       compute_area_of_frame, calc_area, read_results_dict)
+                       compute_area_of_frame, calc_area, read_results_dict,
+                       combine_regions_map, convert_move_results, draw_bounding_boxes)
 from .object_detector import Detector
 
 
@@ -60,7 +61,6 @@ class Server:
                 image = images[fid]
             else:
                 image_path = os.path.join(images_direc, fname)
-                print(image_path)
                 image = cv.imread(image_path)
             image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
@@ -159,17 +159,22 @@ class Server:
         return detections, regions_to_query
 
     def emulate_high_query(self, vid_name, low_images_direc, req_regions,
-                           move_to_orig, context=0):
+                           padding, context, normalize, debug_mode,
+                           start_fid, end_fid):
         images_direc = vid_name + "-cropped"
         # Extract images from encoded video
-        extract_images_from_video(images_direc, req_regions, move_to_orig)
+        extract_images_from_video(images_direc, req_regions)
 
         if not os.path.isdir(images_direc):
             self.logger.error("Images directory was not found but the "
                               "second iteration was called anyway")
             return Results()
 
-        fnames = sorted([f for f in os.listdir(images_direc) if "png" in f])
+        orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
+                                                                       padding=padding,
+                                                                       context=context)
+
+        fnames = [f for f in os.listdir(images_direc) if "png" in f]
 
         # Make seperate directory and copy all images to that directory
         merged_images_direc = os.path.join(images_direc, "merged")
@@ -178,10 +183,14 @@ class Server:
             shutil.copy(os.path.join(images_direc, img), merged_images_direc)
 
         merged_images = merge_images(
-            merged_images_direc, low_images_direc, req_regions,
-            move_to_orig, context)
+            merged_images_direc, low_images_direc, move_regions,
+            move_to_orig, context, normalize, debug_mode, start_fid, end_fid)
+
+        fnames = [f for f in os.listdir(merged_images_direc) if "png" in f and "_" in f]
+        fnames.sort(key=lambda x: int(x.split('_')[0]))
+
         results, _ = self.perform_detection(
-            images_direc, self.config.high_resolution, fnames,
+            merged_images_direc, self.config.high_resolution, fnames,
             merged_images, True)
 
         results_with_detections_only = Results()
@@ -194,7 +203,7 @@ class Server:
         high_only_results = Results()
         area_dict = {}
         for r in results_with_detections_only.regions:
-            frame_regions = req_regions.regions_dict[r.fid]
+            frame_regions = move_regions.regions_dict[r.fid]
             regions_area = 0
             if r.fid in area_dict:
                 regions_area = area_dict[r.fid]
@@ -210,7 +219,13 @@ class Server:
 
         shutil.rmtree(merged_images_direc)
 
-        return results_with_detections_only
+        r2 = convert_move_results(results_with_detections_only, move_regions, move_to_orig,
+                                  padding, context)
+
+        if debug_mode:
+            draw_bounding_boxes(results_with_detections_only, r2, vid_name, start_fid, end_fid)
+
+        return r2
 
     def perform_low_query(self, vid_data):
         # Write video to file

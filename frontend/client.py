@@ -87,9 +87,8 @@ class Client:
         return final_results, [total_size, 0]
 
     def analyze_video_emulate(self, video_name, high_images_path,
-                              enforce_iframes, low_results_path=None,
-                              debug_mode=False):
-        CONTEXT = 0.01
+                              enforce_iframes, padding, context, normalize,
+                              low_results_path=None, debug_mode=False):
         
         final_results = Results()
         low_phase_results = Results()
@@ -138,24 +137,20 @@ class Client:
 
             # High resolution phase
             if len(req_regions) > 0:
-                orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
-                                                                               padding=0.02,
-                                                                               context=CONTEXT)
                 # Crop, compress and get size
                 regions_size, _ = compute_regions_size(
                     req_regions, video_name, high_images_path,
                     self.config.high_resolution, self.config.high_qp,
-                    enforce_iframes, True, orig_to_move)
+                    enforce_iframes, True)
                 self.logger.info(f"Sent {len(req_regions)} regions which have "
                                  f"{regions_size / 1024}KB in second phase "
                                  f"using {self.config.high_qp}")
                 total_size[1] += regions_size
 
                 # High resolution phase every three filter
-                move_r2 = self.server.emulate_high_query(
-                          video_name, low_images_path, move_regions, move_to_orig, CONTEXT)
-                r2 = convert_move_results(move_r2, move_to_orig)
-                r2 = move_r2
+                r2 = self.server.emulate_high_query(
+                          video_name, low_images_path, req_regions, padding, context,
+                          normalize, debug_mode, start_fid, end_fid)
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch")
 
@@ -164,10 +159,6 @@ class Client:
                 final_results.combine_results(
                     r2, self.config.intersection_threshold)
 
-                if debug_mode:
-                    draw_bounding_boxes(move_r2, video_name, start_fid, end_fid)
-                exit()
-            
             # Cleanup for the next batch
             cleanup(video_name, debug_mode, start_fid, end_fid)
 

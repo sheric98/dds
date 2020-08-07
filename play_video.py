@@ -49,7 +49,8 @@ def main(args):
         # Run emulation
         results, bw = client.analyze_video_emulate(
             args.video_name, args.high_images_path,
-            args.enforce_iframes, args.low_results_path, args.debug_mode)
+            args.enforce_iframes, args.padding, args.context,
+            args.normalize, args.low_results_path, args.debug_mode)
     elif not args.simulate and not args.hname:
         mode = "mpeg"
         logger.warning(f"Running in MPEG mode with resolution "

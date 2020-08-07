@@ -155,6 +155,11 @@ class Results:
             elif ("high" in dup_region.origin and
                   "low" in region_to_add.origin):
                 final_object = dup_region
+            else:
+                if region_to_add.conf > dup_region.conf:
+                    final_object = region_to_add
+                else:
+                    final_object = dup_region
             dup_region.x = final_object.x
             dup_region.y = final_object.y
             dup_region.w = final_object.w
@@ -232,6 +237,26 @@ class Results:
             self.write_results_csv(fname)
         else:
             self.write_results_txt(fname)
+
+class MoveResults(Results):
+    def __init__(self):
+        super().__init__()
+        self.move_to_origs = {}
+    
+    def append(self, region, orig_fid):
+        super().append(region)
+        fid = region.fid
+        if fid not in self.move_to_origs:
+            self.move_to_origs[fid] = set()
+        self.move_to_origs[fid].add(orig_fid)
+
+
+class BBox:
+    def __init__(self, x, y, w, h):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
 
 
 def to_graph(l):
@@ -592,7 +617,7 @@ def extract_images_from_video(images_path, req_regions, move_to_orig=None):
 
     fnames = sorted(
         [os.path.join(images_path, name)
-         for name in os.listdir(images_path) if "png" in name])
+            for name in os.listdir(images_path) if "png" in name])
     
     if move_to_orig is None:
         fids = sorted(list(set([r.fid for r in req_regions.regions])))
@@ -603,19 +628,20 @@ def extract_images_from_video(images_path, req_regions, move_to_orig=None):
 
         for region in req_regions.regions:
             fid = str(region.fid)
-            orig_fid = str(move_to_orig[region].fid)
+            orig_fid = move_to_orig[region].fid
             if fid not in move_to_orig_fids:
                 move_to_orig_fids[fid] = set()
             move_to_orig_fids[fid].add(orig_fid)
         
         for key, item in move_to_orig_fids.items():
             orig_list = sorted([orig_fid for orig_fid in item])
-            png_name = '_'.join(orig_list)
+            orig_str_list = list(map(lambda x: str(x), orig_list))
+            png_name = '_'.join(orig_str_list)
 
             move_to_orig_fids[key] = png_name
 
         pairs = list(move_to_orig_fids.items())
-        pairs.sort(key=lambda x: x[0])
+        pairs.sort(key=lambda x: int(x[0]))
         fids_mapping = zip(pairs, fnames)
 
     for fname in fnames:
@@ -631,7 +657,7 @@ def extract_images_from_video(images_path, req_regions, move_to_orig=None):
                       os.path.join(images_path, f"{x[0] + '_' + x[1]}.png"))
 
 def crop_images(results, vid_name, images_direc, resolution=None,
-                orig_to_move=None):
+                orig_to_move=None, normalize=False):
     cached_image = None
     cropped_images = {}
 
@@ -667,8 +693,16 @@ def crop_images(results, vid_name, images_direc, resolution=None,
         x1_orig = int((region.w * width) + x0_orig - 1)
         y1_orig = int((region.h * height) + y0_orig - 1)
 
+        base = [.485, .456, .406]
         if f_idx not in cropped_images:
-            cropped_images[f_idx] = np.zeros_like(cached_image[1])
+            base_im = np.zeros_like(cached_image[1])
+            if normalize:
+                base_im[:,:,0] = base[0]*255
+                base_im[:,:,1] = base[1]*255
+                base_im[:,:,2] = base[2]*255
+
+            cropped_images[f_idx] = base_im
+
 
         cropped_image = cropped_images[f_idx]
         cropped_image[y0_move:y1_move, x0_move:x1_move, :] = cached_image[1][y0_orig:y1_orig, x0_orig:x1_orig, :]
@@ -690,41 +724,65 @@ def crop_images(results, vid_name, images_direc, resolution=None,
     return frames_count
 
 
-def merge_images(cropped_images_direc, low_images_direc, req_regions,
-                 move_to_orig, context):
-    images = {}
-    for fname in os.listdir(cropped_images_direc):
-        if "png" not in fname:
-            continue
-        fids_str = fname.split('.')[0]
-        fids_full_split = fids_str.split('_')
-        fid_idx = int(fids_full_split[0])
-        fids = fids_full_split[1:]
+def merge_images(cropped_images_direc, low_images_direc, move_regions,
+                 move_to_orig, context, normalize, debug_mode, start_idx, end_idx):
 
-        # Read high resolution image
-        high_image = cv.imread(os.path.join(cropped_images_direc, fname))
-        high_copy = high_image[:, :, :]
-        width = high_image.shape[1]
-        height = high_image.shape[0]
+    if debug_mode:
+        os.makedirs("debugging", exist_ok=True)
+        vid_name = cropped_images_direc.split('/')[1].split('-')[0]
+        debug_path = os.path.join("debugging", f'{vid_name}-{start_idx}-{end_idx}-merged')
+        os.makedirs(debug_path, exist_ok=True)
+
+    images = {}
+    for fid, orig_fids in move_regions.move_to_origs.items():
+        
+        high_images_dict = {}
+        height = -1
+        width = -1
+        col_range = -1
+        for orig_fid in orig_fids:
+            fid_name = f'{str(orig_fid).zfill(10)}.png'
+            high_image = cv.imread(os.path.join(cropped_images_direc, fid_name))
+            high_images_dict[orig_fid] = high_image
+
+            # set max values
+            height = max(height, high_image.shape[0])
+            width = max(width, high_image.shape[1])
+            col_range = max(col_range, high_image.shape[2])
+
+        base = [.485, .456, .406]
+        base_im = np.zeros((height, width, col_range))
+        if normalize:
+            base_im[:,:,0] = base[0]*255
+            base_im[:,:,1] = base[1]*255
+            base_im[:,:,2] = base[2]*255
+
+        for orig_fid, high_im in high_images_dict.items():
+            if high_im.shape[0] != height or high_im.shape[1] != width:
+                enlarge_high = cv.resize(high_im, (width, height), fx=0, fy=0,
+                                         interpolation=cv.INTER_CUBIC)
+                high_images_dict[orig_fid] = enlarge_high
 
         # Read low resolution image
         low_images_dict = {}
-        for fid in fids:
-            fid_int = int(fid)
-            fid_name = fid.zfill(10) + ".png"
+        for orig_fid in orig_fids:
+            fid_name = f'{str(orig_fid).zfill(10)}.png'
             low_image = cv.imread(os.path.join(low_images_direc, fid_name))
             # enlarge low resolution image
             enlarged_image = cv.resize(low_image, (width, height), fx=0, fy=0,
                                        interpolation=cv.INTER_CUBIC)
-            low_images_dict[fid_int] = enlarged_image
+            low_images_dict[orig_fid] = enlarged_image
 
         # Put regions in place
-        regions = req_regions.regions_dict[fid_idx]
+        regions = move_regions.regions_dict[fid]
+        high_coords = []
         for r in regions:
             orig_r = move_to_orig[r]
             low_image = low_images_dict[orig_r.fid]
+            high_image = high_images_dict[orig_r.fid]
 
             c = []
+            high_c = []
 
             for region in [orig_r, r]:
 
@@ -739,6 +797,14 @@ def merge_images(cropped_images_direc, low_images_direc, req_regions,
                 context_y1 = int(context_y_end * height - 1)
 
                 c.append([context_x0, context_x1, context_y0, context_y1])
+
+                x0 = int(region.x * width)
+                y0 = int(region.y * height)
+                x1 = int((region.w * width) + x0 - 1)
+                y1 = int((region.h * height) + y0 - 1)
+                high_c.append([x0, y0, x1, y1])
+            
+            high_c.append(orig_r.fid)
             
             # make sure widths and heights are the same
             orig_w = c[0][1] - c[0][0]
@@ -746,29 +812,47 @@ def merge_images(cropped_images_direc, low_images_direc, req_regions,
             orig_h = c[0][3] - c[0][2]
             r_h = c[1][3] - c[1][2]
 
+            # also adjust left alignment / right alignment
             if orig_w < r_w:
                 c[1][1] = c[1][0] + orig_w
+                if orig_r.x - context < 0:
+                    c[1][1] += int(abs(orig_r.x - context) * width)
+                    c[1][0] += int(abs(orig_r.x - context) * width)
             elif r_w < orig_w:
                 c[0][1] = c[0][0] + r_w
-            
             if orig_h < r_h:
                 c[1][3] = c[1][2] + orig_h
+                if orig_r.y - context < 0:
+                    c[1][3] += int(abs(orig_r.y - context) * height)
+                    c[1][2] += int(abs(orig_r.y - context) * height)
             elif r_h < orig_h:
                 c[0][3] = c[0][2] + r_h
 
+            high_coords.append(high_c)
 
-            x0 = int(r.x * width)
-            y0 = int(r.y * height)
-            x1 = int((r.w * width) + x0 - 1)
-            y1 = int((r.h * height) + y0 - 1)
-
-            high_image[c[1][2]:c[1][3], c[1][0]:c[1][1], :] =\
+            # overlay low-res images first
+            base_im[c[1][2]:c[1][3], c[1][0]:c[1][1], :] =\
                 low_image[c[0][2]:c[0][3], c[0][0]:c[0][1], :]
-            high_image[y0:y1, x0:x1, :] = high_copy[y0:y1, x0:x1, :]
 
-        cv.imwrite(os.path.join(cropped_images_direc, fname), high_image,
+        # put high-res on top
+        for coords in high_coords:
+            x0, y0, x1, y1 = coords[0]
+            mov_x0, mov_y0, mov_x1, mov_y1 = coords[1]
+            high_image = high_images_dict[coords[2]]
+            base_im[mov_y0:mov_y1, mov_x0:mov_x1, :] = high_image[y0:y1, x0:x1, :]
+        
+        # save image
+        sorted_origs = sorted(list(orig_fids))
+        orig_str = '_'.join([str(orig_fid) for orig_fid in sorted_origs])
+        fname = f'{str(fid)}_{orig_str}.png'
+
+        img_path = os.path.join(cropped_images_direc, fname)
+        cv.imwrite(img_path, base_im,
                    [cv.IMWRITE_PNG_COMPRESSION, 0])
-        images[fid_idx] = high_image
+        if debug_mode:
+            shutil.copyfile(img_path, os.path.join(debug_path, fname))
+        
+        images[fid] = cv.imread(img_path)
     return images
 
 
@@ -782,7 +866,7 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
 
     orig_to_move = {}
     move_to_orig = {}
-    move_regions = Results()
+    move_regions = MoveResults()
 
     new_fid = 0
 
@@ -795,13 +879,14 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
         
         # don't move anything if only one frame
         if len(to_combine) == 1:
+            print('single region')
             for region in to_combine[0]:
                 new_region = region.copy()
                 new_region.fid = new_fid
                 orig_to_move[region] = new_region
                 move_to_orig[new_region] = region
-                move_regions.append(new_region)
-                print(str(new_region))
+                move_regions.append(new_region, region.fid)
+                #print(str(new_region))
             new_fid += 1
 
         else:
@@ -843,11 +928,11 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
                 new_region.y = float_y
                 new_region.fid = new_fid + b
 
-                print(str(new_region))
+                #print(str(new_region))
 
                 orig_to_move[orig_region] = new_region
                 move_to_orig[new_region] = orig_region
-                move_regions.append(new_region)
+                move_regions.append(new_region, orig_region.fid)
 
             #print('Combined into %d frames' % len(packer))
 
@@ -856,27 +941,61 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
     return orig_to_move, move_to_orig, move_regions
 
 
-def convert_move_results(move_results, move_to_orig):
+def move_region_to_orig(res_region, move_region, orig_region):
+    """ returns res region mapped to original position
+    """
+    new_x = orig_region.x + res_region.x - move_region.x
+    new_y = orig_region.y + res_region.y - move_region.y
+    new_res = res_region.copy()
+    new_res.fid = orig_region.fid
+    new_res.x = new_x
+    new_res.y = new_y
+
+    return new_res
+
+
+def check_res_overlap(res_region, check_region, padding, context):
+    bbox_x = check_region.x - padding - context
+    bbox_y = check_region.y - padding - context
+    bbox_w = check_region.w + 2 * (padding + context)
+    bbox_h = check_region.h + 2 * (padding + context)
+    check_bbox = BBox(bbox_x, bbox_y, bbox_w, bbox_h)
+
+    return calc_iou(res_region, check_bbox)
+
+
+def convert_move_results(move_results, move_regions, move_to_orig, padding, context,
+                         iou_thresh=0.1):
     orig_results = Results()
 
-    for region in move_results.regions:
-        print(str(region))
-    #    orig_region = move_to_orig[region].copy()
-    #    orig_region.label = region.label
-    #    orig_results.add_single_result(orig_region)
+    for res_region in move_results.regions:
+        check_regions = move_regions.regions_dict[res_region.fid]
+        overlap_region = None
+        for check_region in check_regions:
+            # enough intersect
+            if check_res_overlap(res_region, check_region, padding, context) > iou_thresh:
+                if overlap_region is None:
+                    overlap_region = check_region
+                else:
+                    overlap_region = None
+                    break
+        if overlap_region is not None:
+            orig_region = move_to_orig[overlap_region]
+            orig_res_region = move_region_to_orig(res_region, overlap_region, orig_region)
+            orig_results.add_single_result(orig_res_region)
 
     return orig_results
 
 
 def compute_regions_size(results, vid_name, images_direc, resolution, qp,
                          enforce_iframes, estimate_banwidth=True,
-                         orig_to_move=None):
+                         orig_to_move=None, normalize_crop=False):
     if estimate_banwidth:
         # If not simulation, compress and encode images
         # and get size
         vid_name = f"{vid_name}-cropped"
         frames_count = crop_images(results, vid_name, images_direc,
-                                   resolution, orig_to_move)
+                                   resolution, orig_to_move, normalize_crop)
 
         size = compress_and_get_size(vid_name, 0, frames_count, qp=qp,
                                      enforce_iframes=enforce_iframes,
@@ -889,13 +1008,16 @@ def compute_regions_size(results, vid_name, images_direc, resolution, qp,
         return size
 
 
-def draw_bounding_boxes(results, vid_name, start_id, end_id):
+def draw_bounding_boxes(move_results, orig_results, vid_name, start_id, end_id):
     os.makedirs("debugging", exist_ok=True)
     vid_name_end = vid_name.split('/')[-1]
-    save_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-bb_drawn')
-    res_path = vid_name + '-cropped'
-    visualize_regions(results, res_path, save=True, high=True)
-    shutil.copytree(res_path, save_path)
+    res_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-merged')
+    orig_vid_name = vid_name.split('_dds')[0].split('/')[1]
+    orig_vid_path = os.path.join('..', '..', 'videos', orig_vid_name, 'src')
+    orig_save_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-moved')
+    os.makedirs(orig_save_path, exist_ok=True)
+    visualize_regions(move_results, res_path, save=True, high=True)
+    visualize_regions(orig_results, orig_vid_path, save=True, save_path=orig_save_path)
 
 
 def cleanup(vid_name, debug_mode=False, start_id=None, end_id=None):
@@ -1083,7 +1205,7 @@ def write_stats(fname, vid_name, config, f1, stats, bw,
 def visualize_regions(results, images_direc,
                       low_conf=0.0, high_conf=1.0,
                       label="debugging", save=False,
-                      high=False):
+                      high=False, save_path=None):
     fids = set([r.fid for r in results.regions])
     for fname in os.listdir(images_direc):
         if "png" not in fname:
@@ -1100,7 +1222,6 @@ def visualize_regions(results, images_direc,
         height = image_np.shape[0]
         regions = results.regions_dict[fid]
         for r in regions:
-            print('hi')
             if r.conf < low_conf or r.conf > high_conf:
                 continue
             x0 = int(r.x * width)
@@ -1109,8 +1230,12 @@ def visualize_regions(results, images_direc,
             y1 = int(r.h * height + y0)
             cv.rectangle(image_np, (x0, y0), (x1, y1), (0, 0, 255), 2)
         if save:
-            cv.imwrite(
-                os.path.join(images_direc, fname), image_np)
+            if save_path is None:
+                cv.imwrite(
+                    os.path.join(images_direc, fname), image_np)
+            else:
+                cv.imwrite(
+                    os.path.join(save_path, fname), image_np)
         else:
             cv.putText(image_np, f"{fid}", (10, 20),
                    cv.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
