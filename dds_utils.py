@@ -956,11 +956,11 @@ def move_region_to_orig(res_region, move_region, orig_region):
     return new_res
 
 
-def check_res_overlap(res_region, check_region, padding, context):
-    bbox_x = check_region.x - padding - context
-    bbox_y = check_region.y - padding - context
-    bbox_w = check_region.w + 2 * (padding + context)
-    bbox_h = check_region.h + 2 * (padding + context)
+def check_res_overlap(res_region, check_region, context):
+    bbox_x = check_region.x - context
+    bbox_y = check_region.y - context
+    bbox_w = check_region.w + 2 * context
+    bbox_h = check_region.h + 2 * context
     check_bbox = BBox(bbox_x, bbox_y, bbox_w, bbox_h)
 
     return calc_iou(res_region, check_bbox)
@@ -985,7 +985,7 @@ def convert_move_results(move_results, move_regions, move_to_orig, padding, cont
         overlap_region = None
         for check_region in check_regions:
             # enough intersect
-            if check_res_overlap(res_region, check_region, padding, context) > iou_thresh:
+            if check_res_overlap(res_region, check_region, context) > iou_thresh:
                 if overlap_region is None:
                     overlap_region = check_region
                 else:

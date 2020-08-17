@@ -88,7 +88,7 @@ class Client:
 
     def analyze_video_emulate(self, video_name, high_images_path,
                               enforce_iframes, padding, context, normalize,
-                              iou_thresh, normalize,
+                              iou_thresh, reduced,
                               low_results_path=None, debug_mode=False):
         
         final_results = Results()
