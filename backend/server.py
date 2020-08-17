@@ -159,8 +159,8 @@ class Server:
         return detections, regions_to_query
 
     def emulate_high_query(self, vid_name, low_images_direc, req_regions,
-                           padding, context, normalize, debug_mode,
-                           start_fid, end_fid):
+                           padding, context, normalize, iou_thresh, reduced,
+                           debug_mode, start_fid, end_fid):
         images_direc = vid_name + "-cropped"
         # Extract images from encoded video
         extract_images_from_video(images_direc, req_regions)
@@ -188,6 +188,8 @@ class Server:
 
         fnames = [f for f in os.listdir(merged_images_direc) if "png" in f and "_" in f]
         fnames.sort(key=lambda x: int(x.split('_')[0]))
+
+        dnn_frames = len(fnames)
 
         results, _ = self.perform_detection(
             merged_images_direc, self.config.high_resolution, fnames,
@@ -220,12 +222,12 @@ class Server:
         shutil.rmtree(merged_images_direc)
 
         r2 = convert_move_results(results_with_detections_only, move_regions, move_to_orig,
-                                  padding, context)
+                                  padding, context, iou_thresh, reduced)
 
         if debug_mode:
             draw_bounding_boxes(results_with_detections_only, r2, vid_name, start_fid, end_fid)
 
-        return r2
+        return r2, dnn_frames
 
     def perform_low_query(self, vid_data):
         # Write video to file

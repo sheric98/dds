@@ -37,6 +37,7 @@ def main(args):
     server = None
     mode = None
     results, bw = None, None
+    dnn_frames = 0
     if args.simulate:
         raise NotImplementedError("We do not support simulation anymore")
     elif not args.simulate and not args.hname and args.high_resolution != -1:
@@ -47,10 +48,11 @@ def main(args):
         logger.info("Starting client")
         client = Client(args.hname, config, server)
         # Run emulation
-        results, bw = client.analyze_video_emulate(
+        results, bw, dnn_frames = client.analyze_video_emulate(
             args.video_name, args.high_images_path,
             args.enforce_iframes, args.padding, args.context,
-            args.normalize, args.low_results_path, args.debug_mode)
+            args.normalize, args.iou_thresh, args.reduced,
+            args.low_results_path, args.debug_mode)
     elif not args.simulate and not args.hname:
         mode = "mpeg"
         logger.warning(f"Running in MPEG mode with resolution "
@@ -95,7 +97,7 @@ def main(args):
 
     # Write evaluation results to file
     write_stats(args.outfile, f"{args.video_name}", config, f1,
-                stats, bw, number_of_frames, mode)
+                stats, bw, number_of_frames, mode, dnn_frames)
 
 
 if __name__ == "__main__":

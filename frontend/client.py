@@ -88,6 +88,7 @@ class Client:
 
     def analyze_video_emulate(self, video_name, high_images_path,
                               enforce_iframes, padding, context, normalize,
+                              iou_thresh, normalize,
                               low_results_path=None, debug_mode=False):
         
         final_results = Results()
@@ -103,6 +104,7 @@ class Client:
 
         total_size = [0, 0]
         total_regions_count = 0
+        total_dnn_frames = 0
         for i in range(0, number_of_frames, self.config.batch_size):
             start_fid = i
             end_fid = min(number_of_frames, i + self.config.batch_size)
@@ -148,11 +150,13 @@ class Client:
                 total_size[1] += regions_size
 
                 # High resolution phase every three filter
-                r2 = self.server.emulate_high_query(
-                          video_name, low_images_path, req_regions, padding, context,
-                          normalize, debug_mode, start_fid, end_fid)
+                r2, dnn_frames = self.server.emulate_high_query(
+                                    video_name, low_images_path, req_regions, padding, context,
+                                    normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid)
                 self.logger.info(f"Got {len(r2)} results in second phase "
-                                 f"of batch")
+                                 f"of batch and ran {str(dnn_frames)} frames through dnn")
+
+                total_dnn_frames += dnn_frames
 
                 high_phase_results.combine_results(
                     r2, self.config.intersection_threshold)
@@ -184,7 +188,7 @@ class Client:
 
         final_results.fill_gaps(number_of_frames)
         final_results.write(f"{video_name}")
-        return final_results, total_size
+        return final_results, total_size, total_dnn_frames
 
     def init_server(self, nframes):
         self.config['nframes'] = nframes

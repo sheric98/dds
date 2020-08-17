@@ -449,6 +449,8 @@ def calc_area(a):
 def calc_iou(a, b):
     intersection_area = calc_intersection_area(a, b)
     union_area = calc_area(a) + calc_area(b) - intersection_area
+    if union_area == 0:
+        return float('inf')
     return intersection_area / union_area
 
 
@@ -964,8 +966,18 @@ def check_res_overlap(res_region, check_region, padding, context):
     return calc_iou(res_region, check_bbox)
 
 
+def crop_matched_region(overlap_region, context, res_region):
+    new_res = res_region.copy()
+    new_res.x = max(res_region.x, overlap_region.x - context)
+    new_res.y = max(res_region.y, overlap_region.y - context)
+    new_res.w = min(res_region.x + res_region.w, overlap_region.x + overlap_region.w + context) - new_res.x
+    new_res.h = min(res_region.y + res_region.h, overlap_region.y + overlap_region.h + context) - new_res.y
+
+    return new_res
+
+
 def convert_move_results(move_results, move_regions, move_to_orig, padding, context,
-                         iou_thresh=0.1):
+                         iou_thresh, reduced):
     orig_results = Results()
 
     for res_region in move_results.regions:
@@ -980,8 +992,12 @@ def convert_move_results(move_results, move_regions, move_to_orig, padding, cont
                     overlap_region = None
                     break
         if overlap_region is not None:
+            final_res_region = res_region
+            if reduced:
+                final_res_region = crop_matched_region(overlap_region, context, res_region)
             orig_region = move_to_orig[overlap_region]
-            orig_res_region = move_region_to_orig(res_region, overlap_region, orig_region)
+            orig_res_region = move_region_to_orig(final_res_region, overlap_region, orig_region)
+            
             orig_results.add_single_result(orig_res_region)
 
     return orig_results
@@ -1149,17 +1165,17 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
 
 
 def write_stats_txt(fname, vid_name, config, f1, stats,
-                    bw, frames_count, mode):
+                    bw, frames_count, mode, dnn_frames):
     header = ("video-name,low-resolution,high-resolution,low_qp,high_qp,"
               "batch-size,low-threshold,high-threshold,"
               "tracker-length,TP,FP,FN,F1,"
-              "low-size,high-size,total-size,frames,mode")
+              "low-size,high-size,total-size,frames,dnn_frames,mode")
     stats = (f"{vid_name},{config.low_resolution},{config.high_resolution},"
              f"{config.low_qp},{config.high_qp},{config.batch_size},"
              f"{config.low_threshold},{config.high_threshold},"
              f"{config.tracker_length},{stats[0]},{stats[1]},{stats[2]},"
              f"{f1},{bw[0]},{bw[1]},{bw[0] + bw[1]},"
-             f"{frames_count},{mode}")
+             f"{frames_count},{str(dnn_frames)},{mode}")
 
     if not os.path.isfile(fname):
         str_to_write = f"{header}\n{stats}\n"
@@ -1171,17 +1187,17 @@ def write_stats_txt(fname, vid_name, config, f1, stats,
 
 
 def write_stats_csv(fname, vid_name, config, f1, stats, bw,
-                    frames_count, mode):
+                    frames_count, mode, dnn_frames):
     header = ("video-name,low-resolution,high-resolution,low-qp,high-qp,"
               "batch-size,low-threshold,high-threshold,"
               "tracker-length,TP,FP,FN,F1,"
-              "low-size,high-size,total-size,frames,mode").split(",")
+              "low-size,high-size,total-size,frames,dnn_frames,mode").split(",")
     stats = (f"{vid_name},{config.low_resolution},{config.high_resolution},"
              f"{config.low_qp},{config.high_qp},{config.batch_size},"
              f"{config.low_threshold},{config.high_threshold},"
              f"{config.tracker_length},{stats[0]},{stats[1]},{stats[2]},"
              f"{f1},{bw[0]},{bw[1]},{bw[0] + bw[1]},"
-             f"{frames_count},{mode}").split(",")
+             f"{frames_count},{str(dnn_frames)},{mode}").split(",")
 
     results_files = open(fname, "a")
     csv_writer = csv.writer(results_files)
@@ -1193,13 +1209,13 @@ def write_stats_csv(fname, vid_name, config, f1, stats, bw,
 
 
 def write_stats(fname, vid_name, config, f1, stats, bw,
-                frames_count, mode):
+                frames_count, mode, dnn_frames):
     if re.match(r"\w+[.]csv\Z", fname):
         write_stats_csv(fname, vid_name, config, f1, stats, bw,
-                        frames_count, mode)
+                        frames_count, mode, dnn_frames)
     else:
         write_stats_txt(fname, vid_name, config, f1, stats, bw,
-                        frames_count, mode)
+                        frames_count, mode, dnn_frames)
 
 
 def visualize_regions(results, images_direc,
