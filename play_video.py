@@ -91,7 +91,8 @@ def main(args):
         stats = (tp, fp, fn)
         if mode == "emulation":
             draw_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name)
-            draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map)
+            draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map,
+                                  args.context)
 
         logger.info(f"Got an f1 score of {f1} "
                     f"for this experiment {mode} with "

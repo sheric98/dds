@@ -1041,12 +1041,12 @@ def draw_move_boxes(move_results, vid_name, start_id, end_id):
     visualize_regions(move_results, res_path, save=True, high=True)
 
 
-def draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name, orig_bb_map, orig_map):
+def draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name, orig_bb_map, orig_map, context):
     os.makedirs("debugging", exist_ok=True)
     vid_name_end = vid_name.split('/')[-1]
     res_folder = os.path.join('debugging', f'{vid_name_end}-merged')
     os.makedirs(res_folder, exist_ok=True)
-    visualize_move_stats(tp_bb, fp_bb, fn_bb, res_folder, orig_bb_map, orig_map)
+    visualize_move_stats(tp_bb, fp_bb, fn_bb, res_folder, orig_bb_map, orig_map, context)
 
 
 def draw_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name):
@@ -1287,20 +1287,20 @@ def visualize_stats(tp_bb, fp_bb, fn_bb, images_direc, save_path):
         cv.imwrite(os.path.join(save_path, fname), image_np)
 
 
-def is_bb_subset(bb, region):
+def is_bb_subset(bb, region, context):
     (x, y, w, h, label, confid, bb_fid) = bb
-    return (x >= region.x and x + w <= region.x + region.w and
-        y >= region.y and y + h <= region.y + region.h)
+    return (x >= region.x - context and x + w <= region.x + region.w + context and
+        y >= region.y - context and y + h <= region.y + region.h + context)
 
 
-def move_false_negatives(fn_bb, orig_map, bb_dict):
+def move_false_negatives(fn_bb, orig_map, bb_dict, context):
     for fn in fn_bb:
         (x, y, w, h, label, confid, bb_fid) = fn
         if bb_fid not in orig_map:
             continue
         orig_to_move = orig_map[bb_fid]
         for check, move_region in orig_to_move.items():
-            if check.fid == bb_fid and is_bb_subset(fn, check):
+            if check.fid == bb_fid and is_bb_subset(fn, check, context):
                 new_x = move_region.x + x - check.x
                 new_y = move_region.y + y - check.y
                 new_bb = (new_x, new_y, w, h, label, confid, bb_fid)
@@ -1328,10 +1328,10 @@ def process_tp_or_fp(bbs, color_idx, orig_bb_map, bb_dict):
             bb_dict[bb_fid][move_region.fid].append((new_bb, color_idx))
 
 
-def visualize_move_stats(tp_bb, fp_bb, fn_bb, images_direc, orig_bb_map, orig_map):
+def visualize_move_stats(tp_bb, fp_bb, fn_bb, images_direc, orig_bb_map, orig_map, context):
     colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255)]
     bb_dict = {}
-    move_false_negatives(fn_bb, orig_map, bb_dict)
+    move_false_negatives(fn_bb, orig_map, bb_dict, context)
     process_tp_or_fp(tp_bb, 0, orig_bb_map, bb_dict)
     process_tp_or_fp(fp_bb, 1, orig_bb_map, bb_dict)
 
