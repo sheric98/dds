@@ -732,7 +732,9 @@ def merge_images(cropped_images_direc, low_images_direc, move_regions,
     if debug_mode:
         os.makedirs("debugging", exist_ok=True)
         vid_name = cropped_images_direc.split('/')[1].split('-')[0]
-        debug_path = os.path.join("debugging", f'{vid_name}-{start_idx}-{end_idx}-merged')
+        debug_folder = os.path.join("debugging", f'{vid_name}-merged')
+        os.makedirs(debug_folder, exist_ok=True)
+        debug_path = os.path.join(debug_folder, f'{vid_name}-{start_idx}-{end_idx}-merged')
         os.makedirs(debug_path, exist_ok=True)
 
     images = {}
@@ -881,7 +883,6 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
         
         # don't move anything if only one frame
         if len(to_combine) == 1:
-            print('single region')
             for region in to_combine[0]:
                 new_region = region.copy()
                 new_region.fid = new_fid
@@ -979,6 +980,7 @@ def crop_matched_region(overlap_region, context, res_region):
 def convert_move_results(move_results, move_regions, move_to_orig, padding, context,
                          iou_thresh, reduced):
     orig_results = Results()
+    orig_bb_to_move = {}
 
     for res_region in move_results.regions:
         check_regions = move_regions.regions_dict[res_region.fid]
@@ -997,10 +999,15 @@ def convert_move_results(move_results, move_regions, move_to_orig, padding, cont
                 final_res_region = crop_matched_region(overlap_region, context, res_region)
             orig_region = move_to_orig[overlap_region]
             orig_res_region = move_region_to_orig(final_res_region, overlap_region, orig_region)
+
+            orig_bb = (orig_res_region.x, orig_res_region.y, orig_res_region.w,
+                       orig_res_region.h, orig_res_region.label, orig_res_region.conf,
+                       orig_res_region.fid)
+            orig_bb_to_move[orig_bb] = final_res_region
             
             orig_results.add_single_result(orig_res_region)
 
-    return orig_results
+    return orig_results, orig_bb_to_move
 
 
 def compute_regions_size(results, vid_name, images_direc, resolution, qp,
@@ -1024,16 +1031,32 @@ def compute_regions_size(results, vid_name, images_direc, resolution, qp,
         return size
 
 
-def draw_bounding_boxes(move_results, orig_results, vid_name, start_id, end_id):
+def draw_move_boxes(move_results, vid_name, start_id, end_id):
     os.makedirs("debugging", exist_ok=True)
     vid_name_end = vid_name.split('/')[-1]
-    res_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-merged')
+    res_folder = os.path.join('debugging', f'{vid_name_end}-merged')
+    os.makedirs(res_folder, exist_ok=True)
+    res_path = os.path.join(res_folder, f'{vid_name_end}-{start_id}-{end_id}-merged')
+    os.makedirs(res_path, exist_ok=True)
+    visualize_regions(move_results, res_path, save=True, high=True)
+
+
+def draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name, orig_bb_map, orig_map):
+    os.makedirs("debugging", exist_ok=True)
+    vid_name_end = vid_name.split('/')[-1]
+    res_folder = os.path.join('debugging', f'{vid_name_end}-merged')
+    os.makedirs(res_folder, exist_ok=True)
+    visualize_move_stats(tp_bb, fp_bb, fn_bb, res_folder, orig_bb_map, orig_map)
+
+
+def draw_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name):
+    os.makedirs("debugging", exist_ok=True)
+    vid_name_end = vid_name.split('/')[-1]
     orig_vid_name = vid_name.split('_dds')[0].split('/')[1]
     orig_vid_path = os.path.join('..', '..', 'videos', orig_vid_name, 'src')
-    orig_save_path = os.path.join('debugging', f'{vid_name_end}-{start_id}-{end_id}-moved')
+    orig_save_path = os.path.join('debugging', f'{vid_name_end}-stats')
     os.makedirs(orig_save_path, exist_ok=True)
-    visualize_regions(move_results, res_path, save=True, high=True)
-    visualize_regions(orig_results, orig_vid_path, save=True, save_path=orig_save_path)
+    visualize_stats(tp_bb, fp_bb, fn_bb, orig_vid_path, orig_save_path)
 
 
 def cleanup(vid_name, debug_mode=False, start_id=None, end_id=None):
@@ -1044,16 +1067,17 @@ def cleanup(vid_name, debug_mode=False, start_id=None, end_id=None):
         shutil.rmtree(vid_name + "-base-phase-cropped")
         shutil.rmtree(vid_name + "-cropped")
     else:
-        if start_id is None or end_id is None:
-            print("Need start_fid and end_fid for debugging mode")
-            exit()
-        os.makedirs("debugging", exist_ok=True)
-        leaf_direc = vid_name.split("/")[-1] + "-cropped"
-        shutil.move(vid_name + "-cropped", "debugging")
-        shutil.move(os.path.join("debugging", leaf_direc),
-                    os.path.join("debugging",
-                                 f"{leaf_direc}-{start_id}-{end_id}"),
-                    copy_function=os.rename)
+        # if start_id is None or end_id is None:
+        #     print("Need start_fid and end_fid for debugging mode")
+        #     exit()
+        # os.makedirs("debugging", exist_ok=True)
+        # leaf_direc = vid_name.split("/")[-1] + "-cropped"
+        # shutil.move(vid_name + "-cropped", "debugging")
+        # shutil.move(os.path.join("debugging", leaf_direc),
+        #             os.path.join("debugging",
+        #                          f"{leaf_direc}-{start_id}-{end_id}"),
+        #             copy_function=os.rename)
+        return
 
 
 def get_size_from_mpeg_results(results_log_path, images_path, resolution):
@@ -1085,8 +1109,8 @@ def filter_results(bboxes, gt_flag, gt_confid_thresh, mpeg_confid_thresh,
 
     result = []
     for b in bboxes:
-        b = b.x, b.y, b.w, b.h, b.label, b.conf
-        (x, y, w, h, label, confid) = b
+        b = b.x, b.y, b.w, b.h, b.label, b.conf, b.fid
+        (x, y, w, h, label, confid, fid) = b
         if (confid >= confid_thresh and w*h <= max_area_thresh and
                 label in relevant_classes):
             result.append(b)
@@ -1094,8 +1118,8 @@ def filter_results(bboxes, gt_flag, gt_confid_thresh, mpeg_confid_thresh,
 
 
 def iou(b1, b2):
-    (x1, y1, w1, h1, label1, confid1) = b1
-    (x2, y2, w2, h2, label2, confid2) = b2
+    (x1, y1, w1, h1, label1, confid1, fid) = b1
+    (x2, y2, w2, h2, label2, confid2, fid) = b2
     x3 = max(x1, x2)
     y3 = max(y1, y2)
     x4 = min(x1+w1, x2+w2)
@@ -1112,6 +1136,9 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
     tp_list = []
     fp_list = []
     fn_list = []
+    tp_bb = []
+    fp_bb = []
+    fn_bb = []
     count_list = []
     for fid in range(max_fid+1):
         bboxes_dd = map_dd[fid]
@@ -1138,8 +1165,10 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
                     break
             if found:
                 tp += 1
+                tp_bb.append(b_dd)
             else:
                 fp += 1
+                fp_bb.append(b_dd)
         for b_gt in bboxes_gt:
             found = False
             for b_dd in bboxes_dd:
@@ -1148,6 +1177,7 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
                     break
             if not found:
                 fn += 1
+                fn_bb.append(b_gt)
             else:
                 count += 1
         tp_list.append(tp)
@@ -1161,7 +1191,8 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
     return (tp, fp, fn, count,
             round(tp/(tp+fp), 3),
             round(tp/(tp+fn), 3),
-            round((2.0*tp/(2.0*tp+fp+fn)), 3))
+            round((2.0*tp/(2.0*tp+fp+fn)), 3),
+            tp_bb, fp_bb, fn_bb)
 
 
 def write_stats_txt(fname, vid_name, config, f1, stats,
@@ -1217,6 +1248,127 @@ def write_stats(fname, vid_name, config, f1, stats, bw,
         write_stats_txt(fname, vid_name, config, f1, stats, bw,
                         frames_count, mode, dnn_frames)
 
+
+def visualize_stats(tp_bb, fp_bb, fn_bb, images_direc, save_path):
+    colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255)]
+    # process results first into dictionary
+    bb_dict = {}
+    fids = set()
+    for idx, bbs in enumerate([tp_bb, fp_bb, fn_bb]):
+        for bb in bbs:
+            (x, y, w, h, label, confid, fid) = bb
+            if fid not in bb_dict:
+                bb_dict[fid] = []
+            fids.add(fid)
+            bb_dict[fid].append((bb, idx))
+    
+    for fname in os.listdir(images_direc):
+        if "png" not in fname:
+            continue
+        
+        fid = int(fname.split('.')[0])
+        if fid not in fids:
+            continue
+
+        image_np = cv.imread(
+            os.path.join(images_direc, fname))
+        width = image_np.shape[1]
+        height = image_np.shape[0]
+
+        regions = bb_dict[fid]
+        for pair in regions:
+            r = pair[0]
+            (x, y, w, h, label, confid, bb_fid) = r
+            x0 = int(x * width)
+            y0 = int(y * height)
+            x1 = int(w * width + x0)
+            y1 = int(h * height + y0)
+            cv.rectangle(image_np, (x0, y0), (x1, y1), colors[pair[1]], 2)
+        cv.imwrite(os.path.join(save_path, fname), image_np)
+
+
+def is_bb_subset(bb, region):
+    (x, y, w, h, label, confid, bb_fid) = bb
+    return (x >= region.x and x + w <= region.x + region.w and
+        y >= region.y and y + h <= region.y + region.h)
+
+
+def move_false_negatives(fn_bb, orig_map, bb_dict):
+    for fn in fn_bb:
+        (x, y, w, h, label, confid, bb_fid) = fn
+        if bb_fid not in orig_map:
+            continue
+        orig_to_move = orig_map[bb_fid]
+        for check, move_region in orig_to_move.items():
+            if check.fid == bb_fid and is_bb_subset(fn, check):
+                new_x = move_region.x + x - check.x
+                new_y = move_region.y + y - check.y
+                new_bb = (new_x, new_y, w, h, label, confid, bb_fid)
+                if bb_fid not in bb_dict:
+                    bb_dict[bb_fid] = {}
+                if move_region.fid not in bb_dict[bb_fid]:
+                    bb_dict[bb_fid][move_region.fid] = []
+                # 2 is color idx of false negative
+                bb_dict[bb_fid][move_region.fid].append((new_bb, 2))
+
+
+def process_tp_or_fp(bbs, color_idx, orig_bb_map, bb_dict):
+    for bb in bbs:
+        (x, y, w, h, label, confid, bb_fid) = bb
+        if bb_fid not in orig_bb_map:
+            continue
+        orig_bb_to_move = orig_bb_map[bb_fid]
+        if bb in orig_bb_to_move:
+            move_region = orig_bb_to_move[bb]
+            new_bb = (move_region.x, move_region.y, move_region.w, move_region.h, label, confid, bb_fid)
+            if bb_fid not in bb_dict:
+                bb_dict[bb_fid] = {}
+            if move_region.fid not in bb_dict[bb_fid]:
+                bb_dict[bb_fid][move_region.fid] = []
+            bb_dict[bb_fid][move_region.fid].append((new_bb, color_idx))
+
+
+def visualize_move_stats(tp_bb, fp_bb, fn_bb, images_direc, orig_bb_map, orig_map):
+    colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255)]
+    bb_dict = {}
+    move_false_negatives(fn_bb, orig_map, bb_dict)
+    process_tp_or_fp(tp_bb, 0, orig_bb_map, bb_dict)
+    process_tp_or_fp(fp_bb, 1, orig_bb_map, bb_dict)
+
+    for fname in os.listdir(images_direc):
+        full_path = os.path.join(images_direc, fname)
+        if not os.path.isdir(full_path):
+            continue
+        
+        fname_split = fname.split('-')
+        start_idx = int(fname_split[-3])
+        end_idx = int(fname_split[-2])
+
+        for im_fname in os.listdir(full_path):
+            image_np = cv.imread(
+                os.path.join(full_path, im_fname))
+            width = image_np.shape[1]
+            height = image_np.shape[0]
+
+            move_fid = int(im_fname.split('_')[0])
+            
+            for orig_fid in range(start_idx, end_idx):
+                if orig_fid not in bb_dict:
+                    continue
+                if move_fid not in bb_dict[orig_fid]:
+                    continue
+
+                regions = bb_dict[orig_fid][move_fid]
+
+                for pair in regions:
+                    r = pair[0]
+                    (x, y, w, h, label, confid, bb_fid) = r
+                    x0 = int(x * width)
+                    y0 = int(y * height)
+                    x1 = int(w * width + x0)
+                    y1 = int(h * height + y0)
+                    cv.rectangle(image_np, (x0, y0), (x1, y1), colors[pair[1]], 2)
+            cv.imwrite(os.path.join(full_path, im_fname), image_np)
 
 def visualize_regions(results, images_direc,
                       low_conf=0.0, high_conf=1.0,

@@ -5,7 +5,7 @@ import cv2 as cv
 from dds_utils import (Results, Region, calc_iou, merge_images,
                        extract_images_from_video, merge_boxes_in_results,
                        compute_area_of_frame, calc_area, read_results_dict,
-                       combine_regions_map, convert_move_results, draw_bounding_boxes)
+                       combine_regions_map, convert_move_results, draw_move_boxes)
 from .object_detector import Detector
 
 
@@ -221,13 +221,13 @@ class Server:
 
         shutil.rmtree(merged_images_direc)
 
-        r2 = convert_move_results(results_with_detections_only, move_regions, move_to_orig,
-                                  padding, context, iou_thresh, reduced)
+        r2, orig_bb_to_move = convert_move_results(results_with_detections_only, move_regions, move_to_orig,
+                                                   padding, context, iou_thresh, reduced)
 
-        if debug_mode:
-            draw_bounding_boxes(results_with_detections_only, r2, vid_name, start_fid, end_fid)
+        #if debug_mode:
+            #draw_move_boxes(results_with_detections_only, vid_name, start_fid, end_fid)
 
-        return r2, dnn_frames
+        return r2, dnn_frames, orig_bb_to_move, orig_to_move
 
     def perform_low_query(self, vid_data):
         # Write video to file

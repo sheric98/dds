@@ -4,7 +4,8 @@ import logging
 from backend.server import Server
 from frontend.client import Client
 from dds_utils import (ServerConfig, read_results_dict,
-                       evaluate, write_stats)
+                       evaluate, write_stats, draw_stats_boxes,
+                       draw_move_stats_boxes)
 import sys
 
 from munch import *
@@ -48,7 +49,7 @@ def main(args):
         logger.info("Starting client")
         client = Client(args.hname, config, server)
         # Run emulation
-        results, bw, dnn_frames = client.analyze_video_emulate(
+        results, bw, dnn_frames, orig_bb_map, orig_map = client.analyze_video_emulate(
             args.video_name, args.high_images_path,
             args.enforce_iframes, args.padding, args.context,
             args.normalize, args.iou_thresh, args.reduced,
@@ -84,10 +85,14 @@ def main(args):
     if args.ground_truth:
         ground_truth_dict = read_results_dict(args.ground_truth)
         logger.info("Reading ground truth results complete")
-        tp, fp, fn, _, _, _, f1 = evaluate(
+        tp, fp, fn, _, _, _, f1, tp_bb, fp_bb, fn_bb = evaluate(
             number_of_frames - 1, results.regions_dict, ground_truth_dict,
             args.low_threshold, 0.5, 0.4, 0.4)
         stats = (tp, fp, fn)
+        if mode == "emulation":
+            draw_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name)
+            draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map)
+
         logger.info(f"Got an f1 score of {f1} "
                     f"for this experiment {mode} with "
                     f"tp {stats[0]} fp {stats[1]} fn {stats[2]} "

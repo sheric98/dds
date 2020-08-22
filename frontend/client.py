@@ -6,7 +6,7 @@ import json
 from dds_utils import (Results, read_results_dict, cleanup, Region,
                        compute_regions_size, extract_images_from_video,
                        merge_boxes_in_results, combine_regions_map,
-                       convert_move_results, draw_bounding_boxes)
+                       convert_move_results)
 import yaml
 
 
@@ -105,6 +105,8 @@ class Client:
         total_size = [0, 0]
         total_regions_count = 0
         total_dnn_frames = 0
+        orig_bb_map = {}
+        orig_map = {}
         for i in range(0, number_of_frames, self.config.batch_size):
             start_fid = i
             end_fid = min(number_of_frames, i + self.config.batch_size)
@@ -150,13 +152,17 @@ class Client:
                 total_size[1] += regions_size
 
                 # High resolution phase every three filter
-                r2, dnn_frames = self.server.emulate_high_query(
-                                    video_name, low_images_path, req_regions, padding, context,
-                                    normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid)
+                r2, dnn_frames, orig_bb_to_move, orig_to_move = self.server.emulate_high_query(
+                    video_name, low_images_path, req_regions, padding, context,
+                    normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid)
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch and ran {str(dnn_frames)} frames through dnn")
 
                 total_dnn_frames += dnn_frames
+
+                for fid in range(start_fid, end_fid):
+                    orig_bb_map[fid] = orig_bb_to_move
+                    orig_map[fid] = orig_to_move
 
                 high_phase_results.combine_results(
                     r2, self.config.intersection_threshold)
@@ -188,7 +194,7 @@ class Client:
 
         final_results.fill_gaps(number_of_frames)
         final_results.write(f"{video_name}")
-        return final_results, total_size, total_dnn_frames
+        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map
 
     def init_server(self, nframes):
         self.config['nframes'] = nframes
