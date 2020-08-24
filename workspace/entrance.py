@@ -91,7 +91,9 @@ def execute_single(single_instance):
         context = single_instance['context']
         padding = single_instance['padding']
         iou_thresh = single_instance['iou_thresh']
+        grouping = single_instance['grouping']
         reduced = '_reduced' if single_instance['reduced'] else ''
+        used_context = '_ctxconvert' if single_instance['use_context'] else '_noctxconvert'
         normalized = '_normalized' if single_instance['normalize'] else ''
 
         # skip if result file already exists
@@ -99,7 +101,8 @@ def execute_single(single_instance):
         result_file_name = (f"{video_name}_dds_{low_res}_{high_res}_{low_qp}_{high_qp}_"
                             f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
                             f"{prune_score}_{objfilter_iou}_{size_obj}_"
-                            f"{context}_{padding}{normalized}_{iou_thresh}{reduced}")
+                            f"{context}_{padding}{normalized}_{iou_thresh}{reduced}{used_context}_"
+                            f"{grouping}")
         if single_instance['overwrite'] == False and os.path.exists(os.path.join("results", result_file_name)):
             print(f"Skipping {result_file_name}")
         else:

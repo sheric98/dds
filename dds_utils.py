@@ -978,19 +978,26 @@ def crop_matched_region(overlap_region, context, res_region):
 
 
 def convert_move_results(move_results, move_regions, move_to_orig, padding, context,
-                         iou_thresh, reduced):
+                         iou_thresh, reduced, use_context):
     orig_results = Results()
     orig_bb_to_move = {}
+    unmatched_regions = []
 
     for res_region in move_results.regions:
         check_regions = move_regions.regions_dict[res_region.fid]
         overlap_region = None
+        more_than_one = False
         for check_region in check_regions:
             # enough intersect
-            if check_res_overlap(res_region, check_region, context) > iou_thresh:
+            if use_context:
+                iou = check_res_overlap(res_region, check_region, context)
+            else:
+                iou = check_res_overlap(res_region, check_region, 0)
+            if iou > iou_thresh:
                 if overlap_region is None:
                     overlap_region = check_region
                 else:
+                    more_than_one = True
                     overlap_region = None
                     break
         if overlap_region is not None:
@@ -1006,8 +1013,10 @@ def convert_move_results(move_results, move_regions, move_to_orig, padding, cont
             orig_bb_to_move[orig_bb] = final_res_region
             
             orig_results.add_single_result(orig_res_region)
+        else:
+            unmatched_regions.append((res_region, int(more_than_one)))
 
-    return orig_results, orig_bb_to_move
+    return orig_results, orig_bb_to_move, unmatched_regions
 
 
 def compute_regions_size(results, vid_name, images_direc, resolution, qp,
@@ -1057,6 +1066,22 @@ def draw_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name):
     orig_save_path = os.path.join('debugging', f'{vid_name_end}-stats')
     os.makedirs(orig_save_path, exist_ok=True)
     visualize_stats(tp_bb, fp_bb, fn_bb, orig_vid_path, orig_save_path)
+
+
+def draw_unmatched_boxes(unmatched_regions, vid_name, start_fid, end_fid):
+    os.makedirs("debugging", exist_ok=True)
+    vid_name_end = vid_name.split('/')[-1]
+    res_folder = os.path.join('debugging', f'{vid_name_end}-merged')
+    os.makedirs(res_folder, exist_ok=True)
+    res_path = os.path.join(res_folder, f'{vid_name_end}-{start_fid}-{end_fid}-merged')
+    os.makedirs(res_path, exist_ok=True)
+    
+    save_folder = os.path.join('debugging', f'{vid_name_end}-unmatched')
+    os.makedirs(save_folder, exist_ok=True)
+    save_path = os.path.join(save_folder, f'{vid_name_end}-{start_fid}-{end_fid}-unmatched')
+    os.makedirs(save_path, exist_ok=True)
+
+    visualize_unmatched(unmatched_regions, res_path, save_path)
 
 
 def cleanup(vid_name, debug_mode=False, start_id=None, end_id=None):
@@ -1153,6 +1178,9 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
             mpeg_confid_thresh=mpeg_confid_thresh,
             max_area_thresh_gt=max_area_thresh_gt,
             max_area_thresh_mpeg=max_area_thresh_mpeg)
+        bboxes_dd.sort()
+        bboxes_gt.sort()
+
         tp = 0
         fp = 0
         fn = 0
@@ -1247,6 +1275,41 @@ def write_stats(fname, vid_name, config, f1, stats, bw,
     else:
         write_stats_txt(fname, vid_name, config, f1, stats, bw,
                         frames_count, mode, dnn_frames)
+
+
+def visualize_unmatched(unmatched_regions, images_direc, save_path):
+    colors = [(0, 0, 255), (255, 0, 0)]
+    fid_dict = {}
+    fids = set()
+    for pair in unmatched_regions:
+        fid = pair[0].fid
+        if fid not in fid_dict:
+            fid_dict[fid] = []
+        fid_dict[fid].append(pair)
+        fids.add(fid)
+    
+    for fname in os.listdir(images_direc):
+        if "png" not in fname:
+            continue
+
+        fid = int(fname.split('_')[0])
+        if fid not in fids:
+            continue
+
+        image_np = cv.imread(
+            os.path.join(images_direc, fname))
+        width = image_np.shape[1]
+        height = image_np.shape[0]
+
+        pairs = fid_dict[fid]
+        for pair in pairs:
+            r = pair[0]
+            x0 = int(r.x * width)
+            y0 = int(r.y * height)
+            x1 = int(r.w * width + x0)
+            y1 = int(r.h * height + y0)
+            cv.rectangle(image_np, (x0, y0), (x1, y1), colors[pair[1]], 2)
+        cv.imwrite(os.path.join(save_path, fname), image_np)
 
 
 def visualize_stats(tp_bb, fp_bb, fn_bb, images_direc, save_path):

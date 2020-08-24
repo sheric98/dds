@@ -5,7 +5,8 @@ import cv2 as cv
 from dds_utils import (Results, Region, calc_iou, merge_images,
                        extract_images_from_video, merge_boxes_in_results,
                        compute_area_of_frame, calc_area, read_results_dict,
-                       combine_regions_map, convert_move_results, draw_move_boxes)
+                       combine_regions_map, convert_move_results, draw_move_boxes,
+                       draw_unmatched_boxes)
 from .object_detector import Detector
 
 
@@ -160,7 +161,7 @@ class Server:
 
     def emulate_high_query(self, vid_name, low_images_direc, req_regions,
                            padding, context, normalize, iou_thresh, reduced,
-                           debug_mode, start_fid, end_fid):
+                           debug_mode, start_fid, end_fid, use_context, grouping):
         images_direc = vid_name + "-cropped"
         # Extract images from encoded video
         extract_images_from_video(images_direc, req_regions)
@@ -172,7 +173,8 @@ class Server:
 
         orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
                                                                        padding=padding,
-                                                                       context=context)
+                                                                       context=context,
+                                                                       grouping=grouping)
 
         fnames = [f for f in os.listdir(images_direc) if "png" in f]
 
@@ -221,11 +223,13 @@ class Server:
 
         shutil.rmtree(merged_images_direc)
 
-        r2, orig_bb_to_move = convert_move_results(results_with_detections_only, move_regions, move_to_orig,
-                                                   padding, context, iou_thresh, reduced)
+        r2, orig_bb_to_move, unmatched_regions = convert_move_results(
+            results_with_detections_only, move_regions, move_to_orig,
+            padding, context, iou_thresh, reduced, use_context)
 
-        #if debug_mode:
+        if debug_mode:
             #draw_move_boxes(results_with_detections_only, vid_name, start_fid, end_fid)
+            draw_unmatched_boxes(unmatched_regions, vid_name, start_fid, end_fid)
 
         return r2, dnn_frames, orig_bb_to_move, orig_to_move
 

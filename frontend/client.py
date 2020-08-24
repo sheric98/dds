@@ -88,7 +88,7 @@ class Client:
 
     def analyze_video_emulate(self, video_name, high_images_path,
                               enforce_iframes, padding, context, normalize,
-                              iou_thresh, reduced,
+                              iou_thresh, reduced, use_context, grouping,
                               low_results_path=None, debug_mode=False):
         
         final_results = Results()
@@ -154,7 +154,8 @@ class Client:
                 # High resolution phase every three filter
                 r2, dnn_frames, orig_bb_to_move, orig_to_move = self.server.emulate_high_query(
                     video_name, low_images_path, req_regions, padding, context,
-                    normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid)
+                    normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid,
+                    use_context, grouping)
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch and ran {str(dnn_frames)} frames through dnn")
 

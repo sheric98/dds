@@ -52,7 +52,7 @@ def main(args):
         results, bw, dnn_frames, orig_bb_map, orig_map = client.analyze_video_emulate(
             args.video_name, args.high_images_path,
             args.enforce_iframes, args.padding, args.context,
-            args.normalize, args.iou_thresh, args.reduced,
+            args.normalize, args.iou_thresh, args.reduced, args.use_context, args.grouping,
             args.low_results_path, args.debug_mode)
     elif not args.simulate and not args.hname:
         mode = "mpeg"
