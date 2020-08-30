@@ -87,10 +87,10 @@ class Client:
         return final_results, [total_size, 0]
 
     def analyze_video_emulate(self, video_name, high_images_path,
-                              enforce_iframes, padding, context, normalize,
+                              enforce_iframes, padding, context_fn, normalize,
                               iou_thresh, reduced, use_context, grouping,
                               low_results_path=None, debug_mode=False):
-        
+
         final_results = Results()
         low_phase_results = Results()
         high_phase_results = Results()
@@ -100,6 +100,7 @@ class Client:
 
         low_results_dict = None
         if low_results_path:
+            print(low_results_path)
             low_results_dict = read_results_dict(low_results_path)
 
         total_size = [0, 0]
@@ -107,6 +108,8 @@ class Client:
         total_dnn_frames = 0
         orig_bb_map = {}
         orig_map = {}
+        all_rpn_regions = {}
+        r2_to_rpn = {}
         for i in range(0, number_of_frames, self.config.batch_size):
             start_fid = i
             end_fid = min(number_of_frames, i + self.config.batch_size)
@@ -141,6 +144,11 @@ class Client:
 
             # High resolution phase
             if len(req_regions) > 0:
+                # add to all rpn regions
+                for region in req_regions.regions:
+                    if region.fid not in all_rpn_regions:
+                        all_rpn_regions[region.fid] = []
+                    all_rpn_regions[region.fid].append(region)
                 # Crop, compress and get size
                 regions_size, _ = compute_regions_size(
                     req_regions, video_name, high_images_path,
@@ -152,14 +160,15 @@ class Client:
                 total_size[1] += regions_size
 
                 # High resolution phase every three filter
-                r2, dnn_frames, orig_bb_to_move, orig_to_move = self.server.emulate_high_query(
-                    video_name, low_images_path, req_regions, padding, context,
+                r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn = self.server.emulate_high_query(
+                    video_name, low_images_path, req_regions, padding, context_fn,
                     normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid,
                     use_context, grouping)
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch and ran {str(dnn_frames)} frames through dnn")
 
                 total_dnn_frames += dnn_frames
+                r2_to_rpn.update(res_to_rpn)
 
                 for fid in range(start_fid, end_fid):
                     orig_bb_map[fid] = orig_bb_to_move
@@ -168,8 +177,8 @@ class Client:
                 high_phase_results.combine_results(
                     r2, self.config.intersection_threshold)
                 final_results.combine_results(
-                    r2, self.config.intersection_threshold)
-
+                    r2, self.config.intersection_threshold, r2_to_rpn)
+                
             # Cleanup for the next batch
             cleanup(video_name, debug_mode, start_fid, end_fid)
 
@@ -191,11 +200,17 @@ class Client:
                          f"of regions sent in high resolution")
 
         rdict = read_results_dict(f"{video_name}")
-        final_results = merge_boxes_in_results(rdict, 0.3, 0.3)
+        final_results = merge_boxes_in_results(rdict, 0.3, 0.3, r2_to_rpn)
 
         final_results.fill_gaps(number_of_frames)
         final_results.write(f"{video_name}")
-        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map
+
+        final_res_set = set(final_results.regions)
+        print(f'r2_to_rpn has length {str(len(r2_to_rpn.items()))}')
+        for r in r2_to_rpn.keys():
+            assert r in final_res_set
+
+        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map, all_rpn_regions, r2_to_rpn
 
     def init_server(self, nframes):
         self.config['nframes'] = nframes

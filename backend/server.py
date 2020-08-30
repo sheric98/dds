@@ -160,7 +160,7 @@ class Server:
         return detections, regions_to_query
 
     def emulate_high_query(self, vid_name, low_images_direc, req_regions,
-                           padding, context, normalize, iou_thresh, reduced,
+                           padding, context_fn, normalize, iou_thresh, reduced,
                            debug_mode, start_fid, end_fid, use_context, grouping):
         images_direc = vid_name + "-cropped"
         # Extract images from encoded video
@@ -173,7 +173,7 @@ class Server:
 
         orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
                                                                        padding=padding,
-                                                                       context=context,
+                                                                       context_fn=context_fn,
                                                                        grouping=grouping)
 
         fnames = [f for f in os.listdir(images_direc) if "png" in f]
@@ -186,7 +186,7 @@ class Server:
 
         merged_images = merge_images(
             merged_images_direc, low_images_direc, move_regions,
-            move_to_orig, context, normalize, debug_mode, start_fid, end_fid)
+            move_to_orig, context_fn, normalize, debug_mode, start_fid, end_fid)
 
         fnames = [f for f in os.listdir(merged_images_direc) if "png" in f and "_" in f]
         fnames.sort(key=lambda x: int(x.split('_')[0]))
@@ -223,15 +223,15 @@ class Server:
 
         shutil.rmtree(merged_images_direc)
 
-        r2, orig_bb_to_move, unmatched_regions = convert_move_results(
+        r2, orig_bb_to_move, unmatched_regions, res_to_rpn = convert_move_results(
             results_with_detections_only, move_regions, move_to_orig,
-            padding, context, iou_thresh, reduced, use_context)
+            padding, context_fn, iou_thresh, reduced, use_context)
 
         if debug_mode:
             #draw_move_boxes(results_with_detections_only, vid_name, start_fid, end_fid)
             draw_unmatched_boxes(unmatched_regions, vid_name, start_fid, end_fid)
 
-        return r2, dnn_frames, orig_bb_to_move, orig_to_move
+        return r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn
 
     def perform_low_query(self, vid_data):
         # Write video to file

@@ -92,6 +92,8 @@ def execute_single(single_instance):
         padding = single_instance['padding']
         iou_thresh = single_instance['iou_thresh']
         grouping = single_instance['grouping']
+        ctx_mode = single_instance['ctx_mode']
+        max_ctx = single_instance['max_ctx']
         reduced = '_reduced' if single_instance['reduced'] else ''
         used_context = '_ctxconvert' if single_instance['use_context'] else '_noctxconvert'
         normalized = '_normalized' if single_instance['normalize'] else ''
@@ -102,7 +104,7 @@ def execute_single(single_instance):
                             f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
                             f"{prune_score}_{objfilter_iou}_{size_obj}_"
                             f"{context}_{padding}{normalized}_{iou_thresh}{reduced}{used_context}_"
-                            f"{grouping}")
+                            f"{grouping}_{ctx_mode}_{max_ctx}")
         if single_instance['overwrite'] == False and os.path.exists(os.path.join("results", result_file_name)):
             print(f"Skipping {result_file_name}")
         else:

@@ -5,7 +5,8 @@ from backend.server import Server
 from frontend.client import Client
 from dds_utils import (ServerConfig, read_results_dict,
                        evaluate, write_stats, draw_stats_boxes,
-                       draw_move_stats_boxes)
+                       draw_move_stats_boxes, potential_non_fn,
+                       write_tp_fp_gains, tp_fp_to_rpn, get_context_fn)
 import sys
 
 from munch import *
@@ -48,12 +49,13 @@ def main(args):
 
         logger.info("Starting client")
         client = Client(args.hname, config, server)
+        context_fn = get_context_fn(mode=args.ctx_mode, base=args.context, max_ctx=args.max_ctx)
         # Run emulation
-        results, bw, dnn_frames, orig_bb_map, orig_map = client.analyze_video_emulate(
+        results, bw, dnn_frames, orig_bb_map, orig_map, rpn_regions, r2_to_rpn = client.analyze_video_emulate(
             args.video_name, args.high_images_path,
-            args.enforce_iframes, args.padding, args.context,
-            args.normalize, args.iou_thresh, args.reduced, args.use_context, args.grouping,
-            args.low_results_path, args.debug_mode)
+            args.enforce_iframes, args.padding, context_fn,
+            args.normalize, args.iou_thresh, args.reduced, args.use_context,
+            args.grouping, args.low_results_path, args.debug_mode)
     elif not args.simulate and not args.hname:
         mode = "mpeg"
         logger.warning(f"Running in MPEG mode with resolution "
@@ -85,14 +87,19 @@ def main(args):
     if args.ground_truth:
         ground_truth_dict = read_results_dict(args.ground_truth)
         logger.info("Reading ground truth results complete")
-        tp, fp, fn, _, _, _, f1, tp_bb, fp_bb, fn_bb = evaluate(
+        tp, fp, fn, _, _, _, f1, tp_bb, fp_bb, fn_bb, tp_corr_gt = evaluate(
             number_of_frames - 1, results.regions_dict, ground_truth_dict,
             args.low_threshold, 0.5, 0.4, 0.4)
         stats = (tp, fp, fn)
         if mode == "emulation":
-            draw_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name)
-            draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map,
-                                  args.context)
+            if args.debug_mode:
+                draw_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name)
+                draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map,
+                                      context_fn)
+            
+            tp_rpn, fp_rpn = tp_fp_to_rpn(tp_bb, fp_bb, r2_to_rpn)
+            possible_gains = potential_non_fn(fn_bb, rpn_regions, args.iou_thresh)
+            write_tp_fp_gains('bb.json', args.video_name, tp_rpn, fp_rpn, possible_gains)
 
         logger.info(f"Got an f1 score of {f1} "
                     f"for this experiment {mode} with "

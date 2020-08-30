@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import numpy as np
 import cv2 as cv
+import json
 import networkx
 from networkx.algorithms.components.connected import connected_components
 
@@ -39,13 +40,14 @@ class ServerConfig:
 
 class Region:
     def __init__(self, fid, x, y, w, h, conf, label, resolution,
-                 origin="generic"):
+                 origin="generic", move_conf=None):
         self.fid = int(fid)
         self.x = float(x)
         self.y = float(y)
         self.w = float(w)
         self.h = float(h)
         self.conf = float(conf)
+        self.move_conf = move_conf
         self.label = label
         self.resolution = float(resolution)
         self.origin = origin
@@ -65,7 +67,7 @@ class Region:
         return hash((self.fid, self.x, self.y, self.w, self.h))
 
     def __eq__(self, other):
-        return (self.fid, self.x, self.y, self.w, self.h) == (other.fix, other.x, other.y, other.w, other.h)
+        return (self.fid, self.x, self.y, self.w, self.h) == (other.fid, other.x, other.y, other.w, other.h)
 
     def is_same(self, region_to_check, threshold=0.5):
         # If the fids or labels are different
@@ -128,11 +130,11 @@ class Results:
                     max_conf_result = existing_result
         return max_conf_result
 
-    def combine_results(self, additional_results, threshold=0.5):
+    def combine_results(self, additional_results, threshold=0.5, res_to_rpn=None):
         for result_to_add in additional_results.regions:
-            self.add_single_result(result_to_add, threshold)
+            self.add_single_result(result_to_add, threshold, res_to_rpn)
 
-    def add_single_result(self, region_to_add, threshold=0.5):
+    def add_single_result(self, region_to_add, threshold=0.5, res_to_rpn=None):
         if threshold == 1:
             self.append(region_to_add)
             return
@@ -160,12 +162,32 @@ class Results:
                     final_object = region_to_add
                 else:
                     final_object = dup_region
+            
+            if res_to_rpn:
+                if dup_region in res_to_rpn:
+                    orig_set = res_to_rpn[dup_region]
+                    del res_to_rpn[dup_region]
+                else:
+                    orig_set = set()
+
+                if region_to_add in res_to_rpn:
+                    orig_set.update(res_to_rpn[region_to_add])
+                    del res_to_rpn[region_to_add]
+
             dup_region.x = final_object.x
             dup_region.y = final_object.y
             dup_region.w = final_object.w
             dup_region.h = final_object.h
             dup_region.conf = final_object.conf
             dup_region.origin = final_object.origin
+            if region_to_add.move_conf is not None:
+                if dup_region.move_conf is not None:
+                    dup_region.move_conf = max(region_to_add.move_conf, dup_region.move_conf)
+                else:
+                    dup_region.move_conf = region_to_add.move_conf
+
+            if res_to_rpn and len(orig_set) > 0:
+                res_to_rpn[dup_region] = orig_set
 
     def suppress(self, threshold=0.5):
         new_regions_list = []
@@ -201,7 +223,7 @@ class Results:
             return
         results_to_add = Results()
         max_resolution = max([e.resolution for e in self.regions])
-        fids_in_results = [e.fid for e in self.regions]
+        fids_in_results = set([e.fid for e in self.regions])
         for i in range(number_of_frames):
             if i not in fids_in_results:
                 results_to_add.regions.append(Region(i, 0, 0, 0, 0,
@@ -213,10 +235,11 @@ class Results:
     def write_results_txt(self, fname):
         results_file = open(fname, "w")
         for region in self.regions:
+            move_conf = region.move_conf if region.move_conf is not None else ''
             # prepare the string to write
             str_to_write = (f"{region.fid},{region.x},{region.y},"
                             f"{region.w},{region.h},"
-                            f"{region.label},{region.conf},"
+                            f"{region.label},{region.conf},{move_conf},"
                             f"{region.resolution},{region.origin}\n")
             results_file.write(str_to_write)
         results_file.close()
@@ -227,7 +250,7 @@ class Results:
         for region in self.regions:
             row = [region.fid, region.x, region.y,
                    region.w, region.h,
-                   region.label, region.conf,
+                   region.label, region.conf, region.move_conf,
                    region.resolution, region.origin]
             csv_writer.writerow(row)
         results_files.close()
@@ -311,7 +334,7 @@ def pairwise_overlap_indexing_list(single_result_frame, iou_threshold):
     return pointwise + pairwise
 
 
-def simple_merge(single_result_frame, index_to_merge):
+def simple_merge(single_result_frame, index_to_merge, res_to_rpn=None):
     # directly using the largest box
     bbox_large = []
     for i in index_to_merge:
@@ -323,17 +346,29 @@ def simple_merge(single_result_frame, index_to_merge):
         bottom = max(
             np.array(single_result_frame)[i2np], key=lambda x: x.y + x.h)
 
+        move_conf = max(
+            np.array(single_result_frame)[i2np], key=lambda x: x.move_conf if x.move_conf is not None else 0).move_conf
+        
+        if res_to_rpn:
+            combined_set = set()
+            for r in np.array(single_result_frame)[i2np]:
+                if r in res_to_rpn:
+                    combined_set.update(res_to_rpn[r])
+                    del res_to_rpn[r]
+
         fid, x, y, w, h, conf, label, resolution, origin = (
             left.fid, left.x, top.y, right.x + right.w - left.x,
             bottom.y + bottom.h - top.y, left.conf, left.label,
             left.resolution, left.origin)
         single_merged_region = Region(fid, x, y, w, h, conf,
-                                      label, resolution, origin)
+                                      label, resolution, origin, move_conf)
+        if res_to_rpn:
+            res_to_rpn[single_merged_region] = combined_set
         bbox_large.append(single_merged_region)
     return bbox_large
 
 
-def merge_boxes_in_results(results_dict, min_conf_threshold, iou_threshold):
+def merge_boxes_in_results(results_dict, min_conf_threshold, iou_threshold, res_to_rpn=None):
     final_results = Results()
 
     # Clean dict to remove min_conf_threshold
@@ -344,6 +379,8 @@ def merge_boxes_in_results(results_dict, min_conf_threshold, iou_threshold):
                 to_remove.append(r)
         for r in to_remove:
             regions.remove(r)
+            if res_to_rpn and r in res_to_rpn:
+                del res_to_rpn[r]
 
     for fid, regions in results_dict.items():
         overlap_pairwise_list = pairwise_overlap_indexing_list(
@@ -351,7 +388,7 @@ def merge_boxes_in_results(results_dict, min_conf_threshold, iou_threshold):
         overlap_graph = to_graph(overlap_pairwise_list)
         grouped_bbox_idx = [c for c in sorted(
             connected_components(overlap_graph), key=len, reverse=True)]
-        merged_regions = simple_merge(regions, grouped_bbox_idx)
+        merged_regions = simple_merge(regions, grouped_bbox_idx, res_to_rpn)
         for r in merged_regions:
             final_results.append(r)
     return final_results
@@ -372,11 +409,12 @@ def read_results_csv_dict(fname):
         fid = int(row[0])
         x, y, w, h = [float(e) for e in row[1:5]]
         conf = float(row[6])
+        move_conf = float(row[7]) if row[7] else None
         label = row[5]
-        resolution = float(row[7])
-        origin = float(row[8])
+        resolution = float(row[8])
+        origin = float(row[9])
 
-        region = Region(fid, x, y, w, h, conf, label, resolution, origin)
+        region = Region(fid, x, y, w, h, conf, label, resolution, origin, move_conf)
 
         if fid not in results_dict:
             results_dict[fid] = []
@@ -402,13 +440,14 @@ def read_results_txt_dict(fname):
         fid = int(line[0])
         x, y, w, h = [float(e) for e in line[1:5]]
         conf = float(line[6])
+        move_conf = float(line[7]) if line[7] else None
         label = line[5]
-        resolution = float(line[7])
+        resolution = float(line[8])
         origin = "generic"
-        if len(line) > 8:
-            origin = line[8].strip()
+        if len(line) > 9:
+            origin = line[9].strip()
         single_result = Region(fid, x, y, w, h, conf, label,
-                               resolution, origin.rstrip())
+                               resolution, origin.rstrip(), move_conf)
 
         if fid not in results_dict:
             results_dict[fid] = []
@@ -726,8 +765,43 @@ def crop_images(results, vid_name, images_direc, resolution=None,
     return frames_count
 
 
+def get_context_fn(mode='base', base=None, max_ctx=None):
+    def context_fn(r):
+        return 0
+
+    if mode == 'base':
+        return lambda r: base
+    
+    elif mode == 'bestlin':
+        w_mult = -1.8
+        h_mult = -1.694
+        conf_mult = 1.683e-02
+        area_mult = 16.87
+        inv_area_mult = 1.275e-05
+        intercept = 0.2426
+
+        return lambda r: max(0, min(max_ctx, (intercept + w_mult * r.w + h_mult * r.h + conf_mult * r.conf + area_mult * r.w * r.h + inv_area_mult * (1 / (r.w * r.h)))**2))
+
+    elif mode == 'invint':
+        intercept = -0.0379905
+        inv_sqx_mult = 0.0043665
+
+        def context_fn(r):
+            inv_sqx = (r.w * r.h) ** -0.5 if r.w * r.h > 0 else float('inf')
+            return max(0, min(max_ctx, intercept + inv_sqx_mult * inv_sqx))
+
+    elif mode == 'invnoint':
+        inv_mult = 5.189e-05
+
+        def context_fn(r):
+            inv_x = 1 / (r.w * r.h) if r.w * r.h > 0 else float('inf')
+            return max(0, min(max_ctx, inv_mult * inv_x))
+    
+    return context_fn
+
+
 def merge_images(cropped_images_direc, low_images_direc, move_regions,
-                 move_to_orig, context, normalize, debug_mode, start_idx, end_idx):
+                 move_to_orig, context_fn, normalize, debug_mode, start_idx, end_idx):
 
     if debug_mode:
         os.makedirs("debugging", exist_ok=True)
@@ -784,6 +858,8 @@ def merge_images(cropped_images_direc, low_images_direc, move_regions,
             orig_r = move_to_orig[r]
             low_image = low_images_dict[orig_r.fid]
             high_image = high_images_dict[orig_r.fid]
+
+            context = context_fn(orig_r)
 
             c = []
             high_c = []
@@ -860,7 +936,7 @@ def merge_images(cropped_images_direc, low_images_direc, move_regions,
     return images
 
 
-def combine_regions_map(results, padding=0, context=0, grouping=2):
+def combine_regions_map(results, padding, context_fn, grouping=None):
     DEC_PLACES = 20
     ENTIRE_FRAME = rectpack.float2dec(1, DEC_PLACES)
     
@@ -899,6 +975,7 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
             
             dec_rects = []
             for r in combine_regions:
+                context = context_fn(r)
                 pad_w = r.w + 2*(padding + context)
                 pad_h = r.h + 2*(padding + context)
                 if pad_w > 1:
@@ -921,11 +998,13 @@ def combine_regions_map(results, padding=0, context=0, grouping=2):
             for rect in all_rects:
                 b, x, y, w, h, rid = rect
 
+                orig_region = combine_regions[rid]
+
+                context = context_fn(orig_region)
+
                 float_x = float(x / ENTIRE_FRAME) + padding + context
                 float_y = float(y / ENTIRE_FRAME) + padding + context
             
-                orig_region = combine_regions[rid]
-
                 new_region = orig_region.copy()
                 new_region.x = float_x
                 new_region.y = float_y
@@ -953,6 +1032,7 @@ def move_region_to_orig(res_region, move_region, orig_region):
     new_res.fid = orig_region.fid
     new_res.x = new_x
     new_res.y = new_y
+    new_res.move_conf = orig_region.conf
 
     return new_res
 
@@ -977,11 +1057,12 @@ def crop_matched_region(overlap_region, context, res_region):
     return new_res
 
 
-def convert_move_results(move_results, move_regions, move_to_orig, padding, context,
+def convert_move_results(move_results, move_regions, move_to_orig, padding, context_fn,
                          iou_thresh, reduced, use_context):
     orig_results = Results()
     orig_bb_to_move = {}
     unmatched_regions = []
+    results_to_rpns = {}
 
     for res_region in move_results.regions:
         check_regions = move_regions.regions_dict[res_region.fid]
@@ -990,6 +1071,7 @@ def convert_move_results(move_results, move_regions, move_to_orig, padding, cont
         for check_region in check_regions:
             # enough intersect
             if use_context:
+                context = context_fn(move_to_orig[check_region])
                 iou = check_res_overlap(res_region, check_region, context)
             else:
                 iou = check_res_overlap(res_region, check_region, 0)
@@ -1003,20 +1085,23 @@ def convert_move_results(move_results, move_regions, move_to_orig, padding, cont
         if overlap_region is not None:
             final_res_region = res_region
             if reduced:
+                context = context_fn(move_to_orig[overlap_region])
                 final_res_region = crop_matched_region(overlap_region, context, res_region)
+            
             orig_region = move_to_orig[overlap_region]
             orig_res_region = move_region_to_orig(final_res_region, overlap_region, orig_region)
 
             orig_bb = (orig_res_region.x, orig_res_region.y, orig_res_region.w,
                        orig_res_region.h, orig_res_region.label, orig_res_region.conf,
-                       orig_res_region.fid)
+                       orig_res_region.move_conf, orig_res_region.fid)
             orig_bb_to_move[orig_bb] = final_res_region
-            
-            orig_results.add_single_result(orig_res_region)
+
+            results_to_rpns[orig_res_region] = {orig_region}
+            orig_results.add_single_result(orig_res_region, res_to_rpn=results_to_rpns)
         else:
             unmatched_regions.append((res_region, int(more_than_one)))
 
-    return orig_results, orig_bb_to_move, unmatched_regions
+    return orig_results, orig_bb_to_move, unmatched_regions, results_to_rpns
 
 
 def compute_regions_size(results, vid_name, images_direc, resolution, qp,
@@ -1050,12 +1135,12 @@ def draw_move_boxes(move_results, vid_name, start_id, end_id):
     visualize_regions(move_results, res_path, save=True, high=True)
 
 
-def draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name, orig_bb_map, orig_map, context):
+def draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name, orig_bb_map, orig_map, context_fn):
     os.makedirs("debugging", exist_ok=True)
     vid_name_end = vid_name.split('/')[-1]
     res_folder = os.path.join('debugging', f'{vid_name_end}-merged')
     os.makedirs(res_folder, exist_ok=True)
-    visualize_move_stats(tp_bb, fp_bb, fn_bb, res_folder, orig_bb_map, orig_map, context)
+    visualize_move_stats(tp_bb, fp_bb, fn_bb, res_folder, orig_bb_map, orig_map, context_fn)
 
 
 def draw_stats_boxes(tp_bb, fp_bb, fn_bb, vid_name):
@@ -1134,8 +1219,8 @@ def filter_results(bboxes, gt_flag, gt_confid_thresh, mpeg_confid_thresh,
 
     result = []
     for b in bboxes:
-        b = b.x, b.y, b.w, b.h, b.label, b.conf, b.fid
-        (x, y, w, h, label, confid, fid) = b
+        b = b.x, b.y, b.w, b.h, b.label, b.conf, b.move_conf, b.fid
+        (x, y, w, h, label, confid, move_conf, fid) = b
         if (confid >= confid_thresh and w*h <= max_area_thresh and
                 label in relevant_classes):
             result.append(b)
@@ -1143,8 +1228,8 @@ def filter_results(bboxes, gt_flag, gt_confid_thresh, mpeg_confid_thresh,
 
 
 def iou(b1, b2):
-    (x1, y1, w1, h1, label1, confid1, fid) = b1
-    (x2, y2, w2, h2, label2, confid2, fid) = b2
+    (x1, y1, w1, h1, label1, confid1, move_conf1, fid1) = b1
+    (x2, y2, w2, h2, label2, confid2, move_conf2, fid2) = b2
     x3 = max(x1, x2)
     y3 = max(y1, y2)
     x4 = min(x1+w1, x2+w2)
@@ -1162,6 +1247,7 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
     fp_list = []
     fn_list = []
     tp_bb = []
+    tp_corr_gt = []
     fp_bb = []
     fn_bb = []
     count_list = []
@@ -1187,13 +1273,15 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
         count = 0
         for b_dd in bboxes_dd:
             found = False
+            gt_founds = []
             for b_gt in bboxes_gt:
                 if iou(b_dd, b_gt) >= iou_thresh:
                     found = True
-                    break
+                    gt_founds.append(b_gt)
             if found:
                 tp += 1
                 tp_bb.append(b_dd)
+                tp_corr_gt.append(gt_founds)
             else:
                 fp += 1
                 fp_bb.append(b_dd)
@@ -1220,7 +1308,60 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
             round(tp/(tp+fp), 3),
             round(tp/(tp+fn), 3),
             round((2.0*tp/(2.0*tp+fp+fn)), 3),
-            tp_bb, fp_bb, fn_bb)
+            tp_bb, fp_bb, fn_bb, tp_corr_gt)
+
+
+def tp_fp_to_rpn(tp_bb, fp_bb, r2_to_rpn):
+    tp_rpn = set()
+    fp_rpn = set()
+    for bb in tp_bb:
+        (x, y, w, h, label, confid, move_conf, fid) = bb
+        r = Region(fid, x, y, w, h, confid, label, 0, origin="generic", move_conf=None)
+        if r in r2_to_rpn:
+            tp_rpn.update(r2_to_rpn[r])
+
+    for bb in fp_bb:
+        (x, y, w, h, label, confid, move_conf, fid) = bb
+        r = Region(fid, x, y, w, h, confid, label, 0, origin="generic", move_conf=None)
+        if r in r2_to_rpn:
+            fp_rpn.update(r2_to_rpn[r])
+
+    return tp_rpn, fp_rpn
+
+
+def potential_non_fn(fn_bb, rpn_regions, iou_thresh):
+    possible_gains = set()
+    for fn in fn_bb:
+        (x, y, w, h, label, confid, move_conf, fid) = fn
+        regions = rpn_regions[fid]
+        for r in regions:
+            bb = (r.x, r.y, r.w, r.h, r.label, r.conf, r.move_conf, r.fid)
+            if iou(fn, bb) > iou_thresh:
+                possible_gains.add(r)
+
+    return possible_gains
+
+
+def write_tp_fp_gains(fname, vid_name, tp_rpn, fp_rpn, possible_gains):
+    stats = {}
+
+    conv_r = lambda r: (r.x, r.y, r.w, r.h, r.conf, r.fid)
+
+    # x[0][-2] is the move_conf
+    stats['TP'] = [conv_r(r) for r in tp_rpn]
+    stats['FP'] = [conv_r(r) for r in fp_rpn]
+    stats['PG'] = [conv_r(r) for r in possible_gains]
+
+    if os.path.exists(fname):
+        with open(fname, 'r') as prev_file:
+            full_stats = json.load(prev_file)
+        os.remove(fname)
+    else:
+        full_stats = {}
+
+    full_stats[vid_name] = stats
+    with open(fname, 'w') as outfile:
+        json.dump(full_stats, outfile)
 
 
 def write_stats_txt(fname, vid_name, config, f1, stats,
@@ -1319,7 +1460,7 @@ def visualize_stats(tp_bb, fp_bb, fn_bb, images_direc, save_path):
     fids = set()
     for idx, bbs in enumerate([tp_bb, fp_bb, fn_bb]):
         for bb in bbs:
-            (x, y, w, h, label, confid, fid) = bb
+            (x, y, w, h, label, confid, move_conf, fid) = bb
             if fid not in bb_dict:
                 bb_dict[fid] = []
             fids.add(fid)
@@ -1341,7 +1482,7 @@ def visualize_stats(tp_bb, fp_bb, fn_bb, images_direc, save_path):
         regions = bb_dict[fid]
         for pair in regions:
             r = pair[0]
-            (x, y, w, h, label, confid, bb_fid) = r
+            (x, y, w, h, label, confid, move_conf, bb_fid) = r
             x0 = int(x * width)
             y0 = int(y * height)
             x1 = int(w * width + x0)
@@ -1351,22 +1492,23 @@ def visualize_stats(tp_bb, fp_bb, fn_bb, images_direc, save_path):
 
 
 def is_bb_subset(bb, region, context):
-    (x, y, w, h, label, confid, bb_fid) = bb
+    (x, y, w, h, label, confid, move_conf, bb_fid) = bb
     return (x >= region.x - context and x + w <= region.x + region.w + context and
         y >= region.y - context and y + h <= region.y + region.h + context)
 
 
-def move_false_negatives(fn_bb, orig_map, bb_dict, context):
+def move_false_negatives(fn_bb, orig_map, bb_dict, context_fn):
     for fn in fn_bb:
-        (x, y, w, h, label, confid, bb_fid) = fn
+        (x, y, w, h, label, confid, move_conf, bb_fid) = fn
         if bb_fid not in orig_map:
             continue
         orig_to_move = orig_map[bb_fid]
         for check, move_region in orig_to_move.items():
+            context = context_fn(check)
             if check.fid == bb_fid and is_bb_subset(fn, check, context):
                 new_x = move_region.x + x - check.x
                 new_y = move_region.y + y - check.y
-                new_bb = (new_x, new_y, w, h, label, confid, bb_fid)
+                new_bb = (new_x, new_y, w, h, label, confid, move_conf, bb_fid)
                 if bb_fid not in bb_dict:
                     bb_dict[bb_fid] = {}
                 if move_region.fid not in bb_dict[bb_fid]:
@@ -1377,13 +1519,13 @@ def move_false_negatives(fn_bb, orig_map, bb_dict, context):
 
 def process_tp_or_fp(bbs, color_idx, orig_bb_map, bb_dict):
     for bb in bbs:
-        (x, y, w, h, label, confid, bb_fid) = bb
+        (x, y, w, h, label, confid, move_conf, bb_fid) = bb
         if bb_fid not in orig_bb_map:
             continue
         orig_bb_to_move = orig_bb_map[bb_fid]
         if bb in orig_bb_to_move:
             move_region = orig_bb_to_move[bb]
-            new_bb = (move_region.x, move_region.y, move_region.w, move_region.h, label, confid, bb_fid)
+            new_bb = (move_region.x, move_region.y, move_region.w, move_region.h, label, confid, move_conf, bb_fid)
             if bb_fid not in bb_dict:
                 bb_dict[bb_fid] = {}
             if move_region.fid not in bb_dict[bb_fid]:
@@ -1391,10 +1533,10 @@ def process_tp_or_fp(bbs, color_idx, orig_bb_map, bb_dict):
             bb_dict[bb_fid][move_region.fid].append((new_bb, color_idx))
 
 
-def visualize_move_stats(tp_bb, fp_bb, fn_bb, images_direc, orig_bb_map, orig_map, context):
+def visualize_move_stats(tp_bb, fp_bb, fn_bb, images_direc, orig_bb_map, orig_map, context_fn):
     colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255)]
     bb_dict = {}
-    move_false_negatives(fn_bb, orig_map, bb_dict, context)
+    move_false_negatives(fn_bb, orig_map, bb_dict, context_fn)
     process_tp_or_fp(tp_bb, 0, orig_bb_map, bb_dict)
     process_tp_or_fp(fp_bb, 1, orig_bb_map, bb_dict)
 
@@ -1425,13 +1567,14 @@ def visualize_move_stats(tp_bb, fp_bb, fn_bb, images_direc, orig_bb_map, orig_ma
 
                 for pair in regions:
                     r = pair[0]
-                    (x, y, w, h, label, confid, bb_fid) = r
+                    (x, y, w, h, label, confid, move_conf, bb_fid) = r
                     x0 = int(x * width)
                     y0 = int(y * height)
                     x1 = int(w * width + x0)
                     y1 = int(h * height + y0)
                     cv.rectangle(image_np, (x0, y0), (x1, y1), colors[pair[1]], 2)
             cv.imwrite(os.path.join(full_path, im_fname), image_np)
+
 
 def visualize_regions(results, images_direc,
                       low_conf=0.0, high_conf=1.0,
