@@ -6,7 +6,8 @@ from frontend.client import Client
 from dds_utils import (ServerConfig, read_results_dict,
                        evaluate, write_stats, draw_stats_boxes,
                        draw_move_stats_boxes, potential_non_fn,
-                       write_tp_fp_gains, tp_fp_to_rpn, get_context_fn)
+                       write_tp_fp_gains, tp_fp_to_rpn, get_context_fn,
+                       get_unique_high_dict, compare_res_dicts)
 import sys
 
 from munch import *
@@ -49,13 +50,20 @@ def main(args):
 
         logger.info("Starting client")
         client = Client(args.hname, config, server)
-        context_fn = get_context_fn(mode=args.ctx_mode, base=args.context, max_ctx=args.max_ctx)
-        # Run emulation
-        results, bw, dnn_frames, orig_bb_map, orig_map, rpn_regions, r2_to_rpn = client.analyze_video_emulate(
+
+        if args.method == 'base-dds':
+            results, bw, dnn_frames, unique_high_res = client.analyze_video_emulate_base(
             args.video_name, args.high_images_path,
-            args.enforce_iframes, args.padding, context_fn,
-            args.normalize, args.iou_thresh, args.reduced, args.use_context,
-            args.grouping, args.low_results_path, args.debug_mode)
+            args.enforce_iframes, args.low_dds_path, args.low_results_path, args.debug_mode)
+        else:
+            context_fn = get_context_fn(mode=args.ctx_mode, base=args.context, max_ctx=args.max_ctx)
+            # Run emulation
+            results, bw, dnn_frames, orig_bb_map, orig_map, rpn_regions, r2_to_rpn, unique_high_res = client.analyze_video_emulate(
+                args.video_name, args.high_images_path,
+                args.enforce_iframes, args.padding, context_fn,
+                args.normalize, args.iou_thresh, args.reduced, args.use_context,
+                args.grouping, args.merge_rpn, args.merge_thresh,
+                args.low_results_path, args.debug_mode)
     elif not args.simulate and not args.hname:
         mode = "mpeg"
         logger.warning(f"Running in MPEG mode with resolution "
@@ -64,7 +72,7 @@ def main(args):
 
         logger.info("Starting client")
         client = Client(args.hname, config, server)
-        results, bw = client.analyze_video_mpeg(
+        results, bw, dnn_frames = client.analyze_video_mpeg(
             args.video_name, args.high_images_path, args.enforce_iframes)
     elif not args.simulate and args.hname:
         mode = "implementation"
@@ -82,6 +90,8 @@ def main(args):
     low, high = bw
     f1 = 0
     stats = (0, 0, 0)
+    gt_stats = (-1, -1, -1, -1)
+    dds_stats = (-1, -1, -1, -1)
     number_of_frames = len(
         [x for x in os.listdir(args.high_images_path) if "png" in x])
     if args.ground_truth:
@@ -91,7 +101,25 @@ def main(args):
             number_of_frames - 1, results.regions_dict, ground_truth_dict,
             args.low_threshold, 0.5, 0.4, 0.4)
         stats = (tp, fp, fn)
-        if mode == "emulation":
+
+        if mode == "emulation" and args.low_dds_path and args.base_dds_path:
+            low_dict = read_results_dict(args.low_dds_path)
+            logger.info("Reading low results complete")
+            base_dict = read_results_dict(args.base_dds_path)
+            logger.info("Reading base dds results complete")
+
+            second_gt_from_gt = get_unique_high_dict(ground_truth_dict, low_dict)
+            second_gt_from_dds = get_unique_high_dict(base_dict, low_dict)
+            tp_gt, fp_gt, fn_gt, _, _, _, f1_gt, _, _, _, _ = evaluate(
+                number_of_frames - 1, unique_high_res.regions_dict, second_gt_from_gt,
+                args.low_threshold, 0.5, 0.4, 0.4)
+            tp_dds, fp_dds, fn_dds, _, _, _, f1_dds, _, _, _, _ = evaluate(
+                number_of_frames - 1, unique_high_res.regions_dict, second_gt_from_dds,
+                args.low_threshold, 0.5, 0.4, 0.4)
+            gt_stats = (tp_gt, fp_gt, fn_gt, f1_gt)
+            dds_stats = (tp_dds, fp_dds, fn_dds, f1_dds)
+
+        if mode == "emulation" and args.method != 'base-dds':
             if args.debug_mode:
                 draw_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name)
                 draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map,
@@ -110,7 +138,7 @@ def main(args):
 
     # Write evaluation results to file
     write_stats(args.outfile, f"{args.video_name}", config, f1,
-                stats, bw, number_of_frames, mode, dnn_frames)
+                stats, bw, number_of_frames, mode, dnn_frames, gt_stats, dds_stats)
 
 
 if __name__ == "__main__":
@@ -142,7 +170,7 @@ if __name__ == "__main__":
             args.low_images_path = None
         args.intersection_threshold = 1.0
 
-    if args.method != "dds":
+    if args.method != "dds" and args.method != "base-dds":
         assert args.high_resolution == -1, "Only dds support two quality levels"
             
 

@@ -94,6 +94,8 @@ def execute_single(single_instance):
         grouping = single_instance['grouping']
         ctx_mode = single_instance['ctx_mode']
         max_ctx = single_instance['max_ctx']
+        merge_rpn = 'merge-rpn' if single_instance['merge_rpn'] else 'nomerge-rpn'
+        merge_thresh = single_instance['merge_thresh']
         reduced = '_reduced' if single_instance['reduced'] else ''
         used_context = '_ctxconvert' if single_instance['use_context'] else '_noctxconvert'
         normalized = '_normalized' if single_instance['normalize'] else ''
@@ -104,7 +106,7 @@ def execute_single(single_instance):
                             f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
                             f"{prune_score}_{objfilter_iou}_{size_obj}_"
                             f"{context}_{padding}{normalized}_{iou_thresh}{reduced}{used_context}_"
-                            f"{grouping}_{ctx_mode}_{max_ctx}")
+                            f"{grouping}_{ctx_mode}_{max_ctx}_{merge_rpn}_{merge_thresh}")
         if single_instance['overwrite'] == False and os.path.exists(os.path.join("results", result_file_name)):
             print(f"Skipping {result_file_name}")
         else:
@@ -113,6 +115,50 @@ def execute_single(single_instance):
             single_instance['outfile'] = 'stats'
             single_instance['ground_truth'] = f'results/{video_name}_gt'
             single_instance['low_results_path'] = f'results/{video_name}_mpeg_{low_res}_{low_qp}'
+            single_instance['base_dds_path'] = (f"results/"
+                                                f"{video_name}_dds_{low_res}_{high_res}_{low_qp}_{high_qp}_"
+                                                f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
+                                                f"{prune_score}_{objfilter_iou}_{size_obj}")
+            single_instance['low_dds_path'] = f'results/{video_name}_dds_low'
+
+            if single_instance["mode"] == 'implementation':
+                assert single_instance['hname'] != False, "Must provide the server address for implementation, abort."
+                # single_instance['hname'] = '127.0.0.1:5000'
+                
+            subprocess.run(['python', '../play_video.py',
+                                yaml.dump(single_instance)])
+    
+    elif baseline == 'base-dds':
+        video_name = single_instance['video_name']
+        original_images_dir = os.path.join(data_dir, video_name, 'src')
+        low_qp = single_instance['low_qp']
+        high_qp = single_instance['high_qp']
+        low_res = single_instance['low_resolution']
+        high_res = single_instance['high_resolution']
+        rpn_enlarge_ratio = single_instance['rpn_enlarge_ratio']
+        batch_size = single_instance['batch_size']
+        prune_score = single_instance['prune_score']
+        objfilter_iou = single_instance['objfilter_iou']
+        size_obj = single_instance['size_obj']
+
+        # skip if result file already exists
+        # You could customize the way to serialize the parameters into filename by yourself
+        result_file_name = (f"{video_name}_dds_{low_res}_{high_res}_{low_qp}_{high_qp}_"
+                            f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
+                            f"{prune_score}_{objfilter_iou}_{size_obj}")
+        if single_instance['overwrite'] == False and os.path.exists(os.path.join("results", result_file_name)):
+            print(f"Skipping {result_file_name}")
+        else:
+            single_instance['video_name'] = f'results/{result_file_name}'
+            single_instance['high_images_path'] = f'{original_images_dir}'
+            single_instance['outfile'] = 'stats'
+            single_instance['ground_truth'] = f'results/{video_name}_gt'
+            single_instance['low_results_path'] = f'results/{video_name}_mpeg_{low_res}_{low_qp}'
+            single_instance['base_dds_path'] = (f"results/"
+                                                f"{video_name}_dds_{low_res}_{high_res}_{low_qp}_{high_qp}_"
+                                                f"{rpn_enlarge_ratio}_twosides_batch_{batch_size}_"
+                                                f"{prune_score}_{objfilter_iou}_{size_obj}")
+            single_instance['low_dds_path'] = f'results/{video_name}_dds_low'
 
             if single_instance["mode"] == 'implementation':
                 assert single_instance['hname'] != False, "Must provide the server address for implementation, abort."

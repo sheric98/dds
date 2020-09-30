@@ -6,7 +6,7 @@ import json
 from dds_utils import (Results, read_results_dict, cleanup, Region,
                        compute_regions_size, extract_images_from_video,
                        merge_boxes_in_results, combine_regions_map,
-                       convert_move_results)
+                       convert_move_results, get_unique_second_iteration)
 import yaml
 
 
@@ -37,12 +37,14 @@ class Client:
         final_results = Results()
         final_rpn_results = Results()
         total_size = 0
+        total_dnn_frames = 0
         for i in range(0, number_of_frames, self.config.batch_size):
             start_frame = i
             end_frame = min(number_of_frames, i + self.config.batch_size)
 
             batch_fnames = sorted([f"{str(idx).zfill(10)}.png"
                                    for idx in range(start_frame, end_frame)])
+            total_dnn_frames += len(batch_fnames)
 
             req_regions = Results()
             for fid in range(start_frame, end_frame):
@@ -84,12 +86,12 @@ class Client:
 
         final_results.write(video_name)
 
-        return final_results, [total_size, 0]
+        return final_results, [total_size, 0], total_dnn_frames
 
     def analyze_video_emulate(self, video_name, high_images_path,
                               enforce_iframes, padding, context_fn, normalize,
-                              iou_thresh, reduced, use_context, grouping,
-                              low_results_path=None, debug_mode=False):
+                              iou_thresh, reduced, use_context, grouping, merge_rpn,
+                              merge_thresh, low_results_path=None, debug_mode=False):
 
         final_results = Results()
         low_phase_results = Results()
@@ -163,7 +165,7 @@ class Client:
                 r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn = self.server.emulate_high_query(
                     video_name, low_images_path, req_regions, padding, context_fn,
                     normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid,
-                    use_context, grouping)
+                    use_context, grouping, merge_rpn, merge_thresh)
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch and ran {str(dnn_frames)} frames through dnn")
 
@@ -205,12 +207,124 @@ class Client:
         final_results.fill_gaps(number_of_frames)
         final_results.write(f"{video_name}")
 
+        unique_high_res = get_unique_second_iteration(low_phase_results, final_results)
+        unique_high_res.fill_gaps(number_of_frames)
+
         final_res_set = set(final_results.regions)
         print(f'r2_to_rpn has length {str(len(r2_to_rpn.items()))}')
         for r in r2_to_rpn.keys():
             assert r in final_res_set
 
-        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map, all_rpn_regions, r2_to_rpn
+        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map, all_rpn_regions, r2_to_rpn, unique_high_res
+
+    def analyze_video_emulate_base(self, video_name, high_images_path,
+                                   enforce_iframes, low_dds_path, low_results_path=None,
+                                   debug_mode=False):
+        final_results = Results()
+        low_phase_results = Results()
+        high_phase_results = Results()
+
+        number_of_frames = len(
+            [x for x in os.listdir(high_images_path) if "png" in x])
+
+        low_results_dict = None
+        if low_results_path:
+            low_results_dict = read_results_dict(low_results_path)
+
+        total_size = [0, 0]
+        total_regions_count = 0
+        total_dnn_frames = 0
+        for i in range(0, number_of_frames, self.config.batch_size):
+            start_fid = i
+            end_fid = min(number_of_frames, i + self.config.batch_size)
+            self.logger.info(f"Processing batch from {start_fid} to {end_fid}")
+
+            # Encode frames in batch and get size
+            # Make temporary frames to downsize complete frames
+            base_req_regions = Results()
+            for fid in range(start_fid, end_fid):
+                base_req_regions.append(
+                    Region(fid, 0, 0, 1, 1, 1.0, 2,
+                           self.config.high_resolution))
+            encoded_batch_video_size, batch_pixel_size = compute_regions_size(
+                base_req_regions, f"{video_name}-base-phase", high_images_path,
+                self.config.low_resolution, self.config.low_qp,
+                enforce_iframes, True)
+            self.logger.info(f"Sent {encoded_batch_video_size / 1024} "
+                             f"in base phase")
+            total_size[0] += encoded_batch_video_size
+
+            # Low resolution phase
+            low_images_path = f"{video_name}-base-phase-cropped"
+            r1, req_regions = self.server.simulate_low_query(
+                start_fid, end_fid, low_images_path, low_results_dict, False,
+                self.config.rpn_enlarge_ratio)
+            total_regions_count += len(req_regions)
+
+            low_phase_results.combine_results(
+                r1, self.config.intersection_threshold)
+            final_results.combine_results(
+                r1, self.config.intersection_threshold)
+
+            # High resolution phase
+            if len(req_regions) > 0:
+                # Crop, compress and get size
+                regions_size, _ = compute_regions_size(
+                    req_regions, video_name, high_images_path,
+                    self.config.high_resolution, self.config.high_qp,
+                    enforce_iframes, True)
+                self.logger.info(f"Sent {len(req_regions)} regions which have "
+                                 f"{regions_size / 1024}KB in second phase "
+                                 f"using {self.config.high_qp}")
+                total_size[1] += regions_size
+
+                # High resolution phase every three filter
+                r2, dnn_frames = self.server.emulate_high_query_base(
+                    video_name, low_images_path, req_regions)
+                self.logger.info(f"Got {len(r2)} results in second phase "
+                                 f"of batch")
+
+                total_dnn_frames += dnn_frames
+
+                high_phase_results.combine_results(
+                    r2, self.config.intersection_threshold)
+                final_results.combine_results(
+                    r2, self.config.intersection_threshold)
+
+            # Cleanup for the next batch
+            cleanup(video_name, debug_mode, start_fid, end_fid)
+
+        self.logger.info(f"Got {len(low_phase_results)} unique results "
+                         f"in base phase")
+        self.logger.info(f"Got {len(high_phase_results)} positive "
+                         f"identifications out of {total_regions_count} "
+                         f"requests in second phase")
+
+        # Write low_phase_results
+        low_phase_results.fill_gaps(number_of_frames)
+        low_phase_results.write(low_dds_path)
+
+        # Fill gaps in results
+        final_results.fill_gaps(number_of_frames)
+
+        # Write results
+        final_results.write(f"{video_name}")
+
+        self.logger.info(f"Writing results for {video_name}")
+        self.logger.info(f"{len(final_results)} objects detected "
+                         f"and {total_size[1]} total size "
+                         f"of regions sent in high resolution")
+
+        rdict = read_results_dict(f"{video_name}")
+        final_results = merge_boxes_in_results(rdict, 0.3, 0.3)
+
+        final_results.fill_gaps(number_of_frames)
+        final_results.write(f"{video_name}")
+
+        unique_high_res = get_unique_second_iteration(low_phase_results, final_results)
+        unique_high_res.fill_gaps(number_of_frames)
+
+        return final_results, total_size, total_dnn_frames, unique_high_res
 
     def init_server(self, nframes):
         self.config['nframes'] = nframes

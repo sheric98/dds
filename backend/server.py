@@ -6,7 +6,7 @@ from dds_utils import (Results, Region, calc_iou, merge_images,
                        extract_images_from_video, merge_boxes_in_results,
                        compute_area_of_frame, calc_area, read_results_dict,
                        combine_regions_map, convert_move_results, draw_move_boxes,
-                       draw_unmatched_boxes)
+                       draw_unmatched_boxes, merge_images_base, add_context_to_region)
 from .object_detector import Detector
 
 
@@ -161,7 +161,8 @@ class Server:
 
     def emulate_high_query(self, vid_name, low_images_direc, req_regions,
                            padding, context_fn, normalize, iou_thresh, reduced,
-                           debug_mode, start_fid, end_fid, use_context, grouping):
+                           debug_mode, start_fid, end_fid, use_context, grouping,
+                           merge_rpn, merge_thresh):
         images_direc = vid_name + "-cropped"
         # Extract images from encoded video
         extract_images_from_video(images_direc, req_regions)
@@ -171,10 +172,14 @@ class Server:
                               "second iteration was called anyway")
             return Results()
 
-        orig_to_move, move_to_orig, move_regions = combine_regions_map(req_regions,
-                                                                       padding=padding,
-                                                                       context_fn=context_fn,
-                                                                       grouping=grouping)
+        # add context and padding as fields of each request region
+        add_context_to_region(req_regions, context_fn)
+
+        orig_to_move, move_to_orig, move_regions, low_to_high = combine_regions_map(req_regions,
+                                                                                    padding=padding,
+                                                                                    grouping=grouping,
+                                                                                    merge_rpn=merge_rpn,
+                                                                                    merge_thresh=merge_thresh)
 
         fnames = [f for f in os.listdir(images_direc) if "png" in f]
 
@@ -186,7 +191,7 @@ class Server:
 
         merged_images = merge_images(
             merged_images_direc, low_images_direc, move_regions,
-            move_to_orig, context_fn, normalize, debug_mode, start_fid, end_fid)
+            move_to_orig, low_to_high, normalize, debug_mode, start_fid, end_fid)
 
         fnames = [f for f in os.listdir(merged_images_direc) if "png" in f and "_" in f]
         fnames.sort(key=lambda x: int(x.split('_')[0]))
@@ -225,13 +230,67 @@ class Server:
 
         r2, orig_bb_to_move, unmatched_regions, res_to_rpn = convert_move_results(
             results_with_detections_only, move_regions, move_to_orig,
-            padding, context_fn, iou_thresh, reduced, use_context)
+            iou_thresh, reduced, use_context)
 
         if debug_mode:
             #draw_move_boxes(results_with_detections_only, vid_name, start_fid, end_fid)
             draw_unmatched_boxes(unmatched_regions, vid_name, start_fid, end_fid)
 
         return r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn
+
+    def emulate_high_query_base(self, vid_name, low_images_direc, req_regions):
+        images_direc = vid_name + "-cropped"
+        # Extract images from encoded video
+        extract_images_from_video(images_direc, req_regions)
+
+        if not os.path.isdir(images_direc):
+            self.logger.error("Images directory was not found but the "
+                              "second iteration was called anyway")
+            return Results()
+
+        fnames = sorted([f for f in os.listdir(images_direc) if "png" in f])
+
+        dnn_frames = len(fnames)
+
+        # Make seperate directory and copy all images to that directory
+        merged_images_direc = os.path.join(images_direc, "merged")
+        os.makedirs(merged_images_direc, exist_ok=True)
+        for img in fnames:
+            shutil.copy(os.path.join(images_direc, img), merged_images_direc)
+
+        merged_images = merge_images_base(
+            merged_images_direc, low_images_direc, req_regions)
+        results, _ = self.perform_detection(
+            merged_images_direc, self.config.high_resolution, fnames,
+            merged_images)
+
+        results_with_detections_only = Results()
+        for r in results.regions:
+            if r.label == "no obj":
+                continue
+            results_with_detections_only.add_single_result(
+                r, self.config.intersection_threshold)
+
+        high_only_results = Results()
+        area_dict = {}
+        for r in results_with_detections_only.regions:
+            frame_regions = req_regions.regions_dict[r.fid]
+            regions_area = 0
+            if r.fid in area_dict:
+                regions_area = area_dict[r.fid]
+            else:
+                regions_area = compute_area_of_frame(frame_regions)
+                area_dict[r.fid] = regions_area
+            regions_with_result = frame_regions + [r]
+            total_area = compute_area_of_frame(regions_with_result)
+            extra_area = total_area - regions_area
+            if extra_area < 0.05 * calc_area(r):
+                r.origin = "high-res"
+                high_only_results.append(r)
+
+        shutil.rmtree(merged_images_direc)
+
+        return results_with_detections_only, dnn_frames
 
     def perform_low_query(self, vid_data):
         # Write video to file
