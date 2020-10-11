@@ -52,13 +52,13 @@ def main(args):
         client = Client(args.hname, config, server)
 
         if args.method == 'base-dds':
-            results, bw, dnn_frames, unique_high_res = client.analyze_video_emulate_base(
+            results, bw, dnn_frames, unique_high_res, low_results, unique_high_dict = client.analyze_video_emulate_base(
             args.video_name, args.high_images_path,
             args.enforce_iframes, args.low_dds_path, args.low_results_path, args.debug_mode)
         else:
             context_fn = get_context_fn(mode=args.ctx_mode, base=args.context, max_ctx=args.max_ctx)
             # Run emulation
-            results, bw, dnn_frames, orig_bb_map, orig_map, rpn_regions, r2_to_rpn, unique_high_res = client.analyze_video_emulate(
+            results, bw, dnn_frames, orig_bb_map, orig_map, rpn_regions, r2_to_rpn, unique_high_dict = client.analyze_video_emulate(
                 args.video_name, args.high_images_path,
                 args.enforce_iframes, args.padding, context_fn,
                 args.normalize, args.iou_thresh, args.reduced, args.use_context,
@@ -107,14 +107,25 @@ def main(args):
             logger.info("Reading low results complete")
             base_dict = read_results_dict(args.base_dds_path)
             logger.info("Reading base dds results complete")
-
+            
             second_gt_from_gt = get_unique_high_dict(ground_truth_dict, low_dict)
             second_gt_from_dds = get_unique_high_dict(base_dict, low_dict)
+
+            if args.method == 'base-dds':
+                logger.info("Comparing base dict with results")
+                compare_res_dicts(base_dict, results.regions_dict)
+                logger.info("Comparing low dict with low_results")
+                compare_res_dicts(low_dict, low_results.regions_dict)
+                logger.info("Comparing second gt from dds with unique_high_res")
+                compare_res_dicts(second_gt_from_dds, unique_high_res.regions_dict)
+                logger.info("Comparing second gt from dds with unique_high_dict")
+                compare_res_dicts(second_gt_from_dds, unique_high_dict)
+
             tp_gt, fp_gt, fn_gt, _, _, _, f1_gt, _, _, _, _ = evaluate(
-                number_of_frames - 1, unique_high_res.regions_dict, second_gt_from_gt,
+                number_of_frames - 1, unique_high_dict, second_gt_from_gt,
                 args.low_threshold, 0.5, 0.4, 0.4)
             tp_dds, fp_dds, fn_dds, _, _, _, f1_dds, _, _, _, _ = evaluate(
-                number_of_frames - 1, unique_high_res.regions_dict, second_gt_from_dds,
+                number_of_frames - 1, unique_high_dict, second_gt_from_dds,
                 args.low_threshold, 0.5, 0.4, 0.4)
             gt_stats = (tp_gt, fp_gt, fn_gt, f1_gt)
             dds_stats = (tp_dds, fp_dds, fn_dds, f1_dds)

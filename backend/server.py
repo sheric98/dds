@@ -177,6 +177,7 @@ class Server:
 
         orig_to_move, move_to_orig, move_regions, low_to_high = combine_regions_map(req_regions,
                                                                                     padding=padding,
+                                                                                    images_direc=images_direc,
                                                                                     grouping=grouping,
                                                                                     merge_rpn=merge_rpn,
                                                                                     merge_thresh=merge_thresh)

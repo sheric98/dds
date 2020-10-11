@@ -965,8 +965,8 @@ def merge_images(cropped_images_direc, low_images_direc, move_regions, move_to_o
             for region in [low_orig, low_move]:
                 low_x0 = int(region.x * width)
                 low_y0 = int(region.y * height)
-                low_x1 = int((region.x + region.w) * width - 1)
-                low_y1 = int((region.y + region.h) * height - 1)
+                low_x1 = int((region.x + region.w) * width)
+                low_y1 = int((region.y + region.h) * height)
                 c.append([low_x0, low_x1, low_y0, low_y1])
             
 
@@ -976,8 +976,8 @@ def merge_images(cropped_images_direc, low_images_direc, move_regions, move_to_o
                 for region in [high_orig, high_move]:
                     high_x0 = int(region.x * width)
                     high_y0 = int(region.y * height)
-                    high_x1 = int((region.x + region.w) * width - 1)
-                    high_y1 = int((region.y + region.h) * height - 1)
+                    high_x1 = int((region.x + region.w) * width)
+                    high_y1 = int((region.y + region.h) * height)
                     high_c.append([high_x0, high_y0, high_x1, high_y1])
                 high_c.append(low_orig.fid)
                 high_coords.append(high_c)
@@ -1150,7 +1150,7 @@ def add_context_to_region(regions, context_fn):
         region.context = context
 
 
-def combine_regions_map(results, padding, grouping=None, merge_rpn=False,
+def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn=False,
                         merge_thresh=0):
     DEC_PLACES = 20
     ENTIRE_FRAME = rectpack.float2dec(1, DEC_PLACES)
@@ -1190,6 +1190,22 @@ def combine_regions_map(results, padding, grouping=None, merge_rpn=False,
             new_fid += 1
 
         else:
+            fids = list(results.regions_dict.keys())
+
+            high_images_dict = {}
+            height = -1
+            width = -1
+            col_range = -1
+            for orig_fid in fids:
+                fid_name = f'{str(orig_fid).zfill(10)}.png'
+                high_image = cv.imread(os.path.join(images_direc, fid_name))
+                high_images_dict[orig_fid] = high_image
+
+                # set max values
+                height = max(height, high_image.shape[0])
+                width = max(width, high_image.shape[1])
+                col_range = max(col_range, high_image.shape[2])
+
             low_res_regions = []
             combine_map = {}
             for regions in to_combine:
@@ -1199,15 +1215,15 @@ def combine_regions_map(results, padding, grouping=None, merge_rpn=False,
             
             dec_rects = []
             for r in low_res_regions:
-                r_w = min(r.w + 2 * padding, 1)
-                r_h = min(r.h + 2 * padding, 1)
+                r_w = int(min(r.w + 2 * padding, 1) * width)
+                r_h = int(min(r.h + 2 * padding, 1) * height)
                 rect_tuple = (rectpack.float2dec(r_w, DEC_PLACES), rectpack.float2dec(r_h, DEC_PLACES))
                 dec_rects.append(rect_tuple)
 
-            packer = rectpack.newPacker(rotation=False)
+            packer = rectpack.newPacker(pack_algo=rectpack.GuillotineBssfSas, rotation=False)
             for idx, r in enumerate(dec_rects):
                 packer.add_rect(*r, rid=idx)
-            packer.add_bin(ENTIRE_FRAME, ENTIRE_FRAME, count=float('inf'))
+            packer.add_bin(width, height, count=float('inf'))
 
             packer.pack()
 
@@ -1221,8 +1237,8 @@ def combine_regions_map(results, padding, grouping=None, merge_rpn=False,
 
                 orig_region = low_res_regions[rid]
 
-                float_x = float(x / ENTIRE_FRAME)
-                float_y = float(y / ENTIRE_FRAME)
+                float_x = float(x / width)
+                float_y = float(y / height)
                 moved_bbox = BBox(float_x + padding, float_y + padding,
                                   orig_region.w, orig_region.h, pack_fid)
 

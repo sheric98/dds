@@ -6,7 +6,8 @@ import json
 from dds_utils import (Results, read_results_dict, cleanup, Region,
                        compute_regions_size, extract_images_from_video,
                        merge_boxes_in_results, combine_regions_map,
-                       convert_move_results, get_unique_second_iteration)
+                       convert_move_results, get_unique_second_iteration,
+                       get_unique_high_dict)
 import yaml
 
 
@@ -207,15 +208,14 @@ class Client:
         final_results.fill_gaps(number_of_frames)
         final_results.write(f"{video_name}")
 
-        unique_high_res = get_unique_second_iteration(low_phase_results, final_results)
-        unique_high_res.fill_gaps(number_of_frames)
+        unique_high_dict = get_unique_high_dict(final_results.regions_dict, low_phase_results.regions_dict)
 
         final_res_set = set(final_results.regions)
         print(f'r2_to_rpn has length {str(len(r2_to_rpn.items()))}')
         for r in r2_to_rpn.keys():
             assert r in final_res_set
 
-        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map, all_rpn_regions, r2_to_rpn, unique_high_res
+        return final_results, total_size, total_dnn_frames, orig_bb_map, orig_map, all_rpn_regions, r2_to_rpn, unique_high_dict
 
     def analyze_video_emulate_base(self, video_name, high_images_path,
                                    enforce_iframes, low_dds_path, low_results_path=None,
@@ -324,7 +324,9 @@ class Client:
         unique_high_res = get_unique_second_iteration(low_phase_results, final_results)
         unique_high_res.fill_gaps(number_of_frames)
 
-        return final_results, total_size, total_dnn_frames, unique_high_res
+        unique_high_dict = get_unique_high_dict(final_results.regions_dict, low_phase_results.regions_dict)
+
+        return final_results, total_size, total_dnn_frames, unique_high_res, low_phase_results, unique_high_dict
 
     def init_server(self, nframes):
         self.config['nframes'] = nframes
