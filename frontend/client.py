@@ -97,6 +97,7 @@ class Client:
         final_results = Results()
         low_phase_results = Results()
         high_phase_results = Results()
+        req_regions_results = Results()
 
         number_of_frames = len(
             [x for x in os.listdir(high_images_path) if "png" in x])
@@ -147,6 +148,8 @@ class Client:
 
             # High resolution phase
             if len(req_regions) > 0:
+                req_regions_results.combine_results(
+                    req_regions, self.config.intersection_threshold)
                 # add to all rpn regions
                 for region in req_regions.regions:
                     if region.fid not in all_rpn_regions:
@@ -190,6 +193,9 @@ class Client:
         self.logger.info(f"Got {len(high_phase_results)} positive "
                          f"identifications out of {total_regions_count} "
                          f"requests in second phase")
+
+        # Write req_regions
+        #req_regions_results.write(f"{video_name}-req_regions")
 
         # Fill gaps in results
         final_results.fill_gaps(number_of_frames)

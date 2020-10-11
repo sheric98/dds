@@ -1089,6 +1089,8 @@ def combine_rpn_regions(rpn_regions, merge_rpn, merge_thresh):
         extended_regions.append(extended)
         convert_dict[extended] = [rpn]
 
+        print('orig: (%f, %f), extended: (%f, %f)' % (rpn.w, rpn.h, extended.w, extended.h))
+
     if not merge_rpn:
         return extended_regions, convert_dict
 
@@ -1206,6 +1208,7 @@ def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn
                 width = max(width, high_image.shape[1])
                 col_range = max(col_range, high_image.shape[2])
 
+            print('image width: %d, image height: %d' % (width, height))
             low_res_regions = []
             combine_map = {}
             for regions in to_combine:
@@ -1215,12 +1218,15 @@ def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn
             
             dec_rects = []
             for r in low_res_regions:
-                r_w = int(min(r.w + 2 * padding, 1) * width)
-                r_h = int(min(r.h + 2 * padding, 1) * height)
-                rect_tuple = (rectpack.float2dec(r_w, DEC_PLACES), rectpack.float2dec(r_h, DEC_PLACES))
+                prop_w = min(r.w + 2 * padding, 1)
+                prop_h = min(r.h + 2 * padding, 1)
+                r_w = int(prop_w * width)
+                r_h = int(prop_h * height)
+                print('(%d,%f,%f,%d,%d)' % (r.fid, prop_w, prop_h, r_w, r_h))
+                rect_tuple = (r_w, r_h)
                 dec_rects.append(rect_tuple)
 
-            packer = rectpack.newPacker(pack_algo=rectpack.GuillotineBssfSas, rotation=False)
+            packer = rectpack.newPacker(rotation=False)
             for idx, r in enumerate(dec_rects):
                 packer.add_rect(*r, rid=idx)
             packer.add_bin(width, height, count=float('inf'))
@@ -1556,10 +1562,15 @@ def evaluate(max_fid, map_dd, map_gt, gt_confid_thresh, mpeg_confid_thresh,
     fp = sum(fp_list)
     fn = sum(fn_list)
     count = sum(count_list)
+
+    ret1 = round(tp/(tp+fp), 3) if tp + fp != 0 else -1
+    ret2 = round(tp/(tp+fn), 3) if tp + fn != 0 else -1
+    ret3 = round((2.0*tp/(2.0*tp+fp+fn)), 3) if 2.0*tp+fp+fn != 0 else -1
+
     return (tp, fp, fn, count,
-            round(tp/(tp+fp), 3),
-            round(tp/(tp+fn), 3),
-            round((2.0*tp/(2.0*tp+fp+fn)), 3),
+            ret1,
+            ret2,
+            ret3,
             tp_bb, fp_bb, fn_bb, tp_corr_gt)
 
 
