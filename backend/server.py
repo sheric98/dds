@@ -6,7 +6,8 @@ from dds_utils import (Results, Region, calc_iou, merge_images,
                        extract_images_from_video, merge_boxes_in_results,
                        compute_area_of_frame, calc_area, read_results_dict,
                        combine_regions_map, convert_move_results, draw_move_boxes,
-                       draw_unmatched_boxes, merge_images_base, add_context_to_region)
+                       draw_unmatched_boxes, merge_images_base, add_context_to_region,
+                       draw_dnn_boxes)
 from .object_detector import Detector
 
 
@@ -191,7 +192,7 @@ class Server:
             shutil.copy(os.path.join(images_direc, img), merged_images_direc)
 
         merged_images = merge_images(
-            merged_images_direc, low_images_direc, move_regions,
+            vid_name, merged_images_direc, low_images_direc, move_regions,
             move_to_orig, low_to_high, normalize, debug_mode, start_fid, end_fid)
 
         fnames = [f for f in os.listdir(merged_images_direc) if "png" in f and "_" in f]
@@ -202,6 +203,9 @@ class Server:
         results, _ = self.perform_detection(
             merged_images_direc, self.config.high_resolution, fnames,
             merged_images, True)
+
+        if debug_mode:
+            draw_dnn_boxes(results, vid_name, start_fid, end_fid)
 
         results_with_detections_only = Results()
         for r in results.regions:
