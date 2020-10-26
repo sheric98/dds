@@ -1164,16 +1164,21 @@ def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn
                 combine_map.update(frame_combine_map)
             
             dec_rects = []
+
+            low_res_regions.sort(key=lambda r: (r.fid, r.x, r.y, r.w, r.h))
+
             for r in low_res_regions:
                 prop_w = min(r.w + 2 * padding, 1)
                 prop_h = min(r.h + 2 * padding, 1)
                 r_w = int(prop_w * width)
                 r_h = int(prop_h * height)
                 rect_tuple = (r_w, r_h)
+
                 dec_rects.append(rect_tuple)
 
             packer = rectpack.newPacker(rotation=False)
             for idx, r in enumerate(dec_rects):
+                print(r)
                 packer.add_rect(*r, rid=idx)
             packer.add_bin(width, height, count=float('inf'))
 
