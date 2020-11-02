@@ -133,8 +133,8 @@ def main(args):
         if mode == "emulation" and args.method != 'base-dds':
             if args.debug_mode:
                 draw_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name)
-                draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map,
-                                      context_fn)
+                # draw_move_stats_boxes(tp_bb, fp_bb, fn_bb, args.video_name, orig_bb_map, orig_map,
+                #                       context_fn)
             
             tp_rpn, fp_rpn = tp_fp_to_rpn(tp_bb, fp_bb, r2_to_rpn)
             possible_gains = potential_non_fn(fn_bb, rpn_regions, args.iou_thresh)

@@ -7,7 +7,7 @@ from dds_utils import (Results, read_results_dict, cleanup, Region,
                        compute_regions_size, extract_images_from_video,
                        merge_boxes_in_results, combine_regions_map,
                        convert_move_results, get_unique_second_iteration,
-                       get_unique_high_dict)
+                       get_unique_high_dict, draw_high_boxes)
 import yaml
 
 
@@ -98,6 +98,7 @@ class Client:
         low_phase_results = Results()
         high_phase_results = Results()
         req_regions_results = Results()
+        dnn_total_results = Results()
 
         number_of_frames = len(
             [x for x in os.listdir(high_images_path) if "png" in x])
@@ -166,12 +167,15 @@ class Client:
                 total_size[1] += regions_size
 
                 # High resolution phase every three filter
-                r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn = self.server.emulate_high_query(
+                r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn, dnn_res = self.server.emulate_high_query(
                     video_name, low_images_path, req_regions, padding, context_fn,
                     normalize, iou_thresh, reduced, debug_mode, start_fid, end_fid,
                     use_context, grouping, merge_rpn, merge_thresh)
                 self.logger.info(f"Got {len(r2)} results in second phase "
                                  f"of batch and ran {str(dnn_frames)} frames through dnn")
+
+                for region in dnn_res.regions:
+                    dnn_total_results.append(region)
 
                 total_dnn_frames += dnn_frames
                 r2_to_rpn.update(res_to_rpn)
@@ -196,6 +200,14 @@ class Client:
 
         # Write req_regions
         #req_regions_results.write(f"{video_name}-req_regions")
+
+        # Write dnn_results
+        #dnn_total_results.write(f"{video_name}-dnn-results")
+
+        # Write high_results
+        #high_phase_results.write(f"{video_name}-high-results")
+        if debug_mode:
+            draw_high_boxes(high_phase_results, video_name)
 
         # Fill gaps in results
         final_results.fill_gaps(number_of_frames)

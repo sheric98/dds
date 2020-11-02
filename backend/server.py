@@ -204,6 +204,13 @@ class Server:
             merged_images_direc, self.config.high_resolution, fnames,
             merged_images, True)
 
+        # copy into new results file
+        dnn_output = Results()
+        for r in results.regions:
+            new_r = r.copy()
+            new_r.fid = start_fid + r.fid
+            dnn_output.append(new_r)
+
         if debug_mode:
             draw_dnn_boxes(results, vid_name, start_fid, end_fid)
 
@@ -241,7 +248,7 @@ class Server:
             #draw_move_boxes(results_with_detections_only, vid_name, start_fid, end_fid)
             draw_unmatched_boxes(unmatched_regions, vid_name, start_fid, end_fid)
 
-        return r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn
+        return r2, dnn_frames, orig_bb_to_move, orig_to_move, res_to_rpn, dnn_output
 
     def emulate_high_query_base(self, vid_name, low_images_direc, req_regions):
         images_direc = vid_name + "-cropped"

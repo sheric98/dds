@@ -1178,7 +1178,6 @@ def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn
 
             packer = rectpack.newPacker(rotation=False)
             for idx, r in enumerate(dec_rects):
-                print(r)
                 packer.add_rect(*r, rid=idx)
             packer.add_bin(width, height, count=float('inf'))
 
@@ -1203,10 +1202,16 @@ def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn
                 orig_regions = combine_map[orig_region]
 
                 rects = []
-                for orig_r in orig_regions:
-                    new_x = float_x - orig_region.x + orig_r.x + padding
-                    new_y = float_y - orig_region.y + orig_r.y + padding
-                    rects.append((b, new_x, new_y, orig_r.w, orig_r.h))
+                if len(orig_regions) > 1:
+                    for orig_r in orig_regions:
+                        new_x = float_x - orig_region.x + orig_r.x + padding
+                        new_y = float_y - orig_region.y + orig_r.y + padding
+                        rects.append((b, new_x, new_y, orig_r.w, orig_r.h))
+                else:
+                    # Not merging any regions
+                    new_x = float_x + padding
+                    new_y = float_y + padding
+                    rects.append((b, new_x, new_y, orig_region.w, orig_region.h))
 
                 moved_regions = []
                 for idx, orig_r in enumerate(orig_regions):
@@ -1275,7 +1280,12 @@ def convert_move_results(move_results, move_regions, move_to_orig,
     results_to_rpns = {}
 
     for res_region in move_results.regions:
+        # print('Res region is %d, %f, %f, %f, %f' %
+        #         (res_region.fid, res_region.x, res_region.y, res_region.w, res_region.h))
+        # print('Res region x_0, x_1, y_0, y_1: %f, %f, %f, %f' %
+        #         (res_region.x, res_region.x + res_region.w, res_region.y, res_region.y + res_region.h))
         check_regions = move_regions.regions_dict[res_region.fid]
+        matched_regions = []
         overlap_region = None
         more_than_one = False
         for check_region in check_regions:
@@ -1285,13 +1295,19 @@ def convert_move_results(move_results, move_regions, move_to_orig,
             else:
                 iou = check_res_overlap(res_region, check_region, 0)
             if iou > iou_thresh:
+                matched_regions.append((check_region, iou))
                 if overlap_region is None:
                     overlap_region = check_region
                 else:
                     more_than_one = True
-                    overlap_region = None
-                    break
-        if overlap_region is not None:
+        # for idx, (m_r, m_iou) in enumerate(matched_regions):
+        #     print('Match #%d had iou of %f' % (idx, m_iou))
+        #     r = move_to_orig[m_r]
+        #     print('%d, %f, %f, %f, %f' % (m_r.fid, m_r.x, m_r.y, m_r.w, m_r.h))
+        #     print('matched x_0, x_1, y_0, y_1: %f, %f, %f, %f' %
+        #         (m_r.x, m_r.x + m_r.w, m_r.y, m_r.y + m_r.h))
+        #     print('%d, %f, %f, %f, %f' % (r.fid, r.x, r.y, r.w, r.h))
+        if overlap_region is not None and len(matched_regions) == 1:
             final_res_region = res_region
             if reduced:
                 overlap_orig = move_to_orig[overlap_region]
@@ -1309,6 +1325,7 @@ def convert_move_results(move_results, move_regions, move_to_orig,
             orig_results.add_single_result(orig_res_region, res_to_rpn=results_to_rpns)
         else:
             unmatched_regions.append((res_region, int(more_than_one)))
+
 
     return orig_results, orig_bb_to_move, unmatched_regions, results_to_rpns
 
@@ -1342,6 +1359,16 @@ def draw_move_boxes(move_results, vid_name, start_id, end_id):
     res_path = os.path.join(res_folder, f'{vid_name_end}-{start_id}-{end_id}-merged')
     os.makedirs(res_path, exist_ok=True)
     visualize_regions(move_results, res_path, save=True, high=True)
+
+
+def draw_high_boxes(high_results, vid_name):
+    os.makedirs("debugging", exist_ok=True)
+    vid_name_end = vid_name.split('/')[-1]
+    orig_vid_name = vid_name.split('_dds')[0].split('/')[1]
+    orig_vid_path = os.path.join('..', '..', 'videos', orig_vid_name, 'src')
+    save_path = os.path.join('debugging', f'{vid_name_end}-high')
+    os.makedirs(save_path, exist_ok=True)
+    visualize_regions(high_results, orig_vid_path, save=True, high=False, save_path=save_path)
 
 
 def draw_dnn_boxes(dnn_results, vid_name, start_id, end_id):
