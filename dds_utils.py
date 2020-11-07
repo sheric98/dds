@@ -42,7 +42,7 @@ class ServerConfig:
 
 class Region:
     def __init__(self, fid, x, y, w, h, conf, label, resolution,
-                 origin="generic", context=0):
+                 origin="generic", context=0, shift_x=0, shift_y=0):
         self.fid = int(fid)
         self.x = float(x)
         self.y = float(y)
@@ -53,6 +53,8 @@ class Region:
         self.resolution = float(resolution)
         self.origin = origin
         self.context = context
+        self.shift_x = shift_x
+        self.shift_y = shift_y
 
     @staticmethod
     def convert_from_server_response(r, res, phase):
@@ -99,7 +101,8 @@ class Region:
 
     def copy(self):
         return Region(self.fid, self.x, self.y, self.w, self.h, self.conf,
-                      self.label, self.resolution, self.origin, self.context)
+                      self.label, self.resolution, self.origin, self.context,
+                      self.shift_x, self.shift_y)
 
 
 class Results:
@@ -271,12 +274,14 @@ class MoveResults(Results):
 
 
 class BBox:
-    def __init__(self, x, y, w, h, fid=-1):
+    def __init__(self, x, y, w, h, fid=-1, shift_x=0, shift_y=0):
         self.x = x
         self.y = y
         self.w = w
         self.h = h
         self.fid = fid
+        self.shift_x = shift_x
+        self.shift_y = shift_y
 
     def __str__(self):
         string_format = f'{str(self.fid)}, {str(self.x)}, {str(self.y)}, {str(self.w)}, {str(self.h)}'
@@ -289,7 +294,7 @@ class BBox:
         return (self.fid, self.x, self.y, self.w, self.h) == (other.fid, other.x, other.y, other.w, other.h)
 
     def copy(self):
-        return BBox(self.x, self.y, self.w, self.h, self.fid)
+        return BBox(self.x, self.y, self.w, self.h, self.fid, self.shift_x, self.shift_y)
 
 def to_graph(l):
     G = networkx.Graph()
@@ -852,7 +857,8 @@ def get_context_fn(mode='base', base=None, max_ctx=None):
     return context_fn
 
 
-def merge_images(video_name, cropped_images_direc, low_images_direc, move_regions, move_to_orig,
+def merge_images(video_name, cropped_images_direc, low_images_direc, move_regions, 
+                 req_regions, move_to_orig,
                  low_to_high, normalize, debug_mode, start_idx, end_idx):
 
     if debug_mode:
@@ -862,6 +868,8 @@ def merge_images(video_name, cropped_images_direc, low_images_direc, move_region
         os.makedirs(debug_folder, exist_ok=True)
         debug_path = os.path.join(debug_folder, f'{vid_name}-{start_idx}-{end_idx}-merged')
         os.makedirs(debug_path, exist_ok=True)
+
+    merge_images_base(cropped_images_direc, low_images_direc, req_regions)
 
     images = {}
     for fid, orig_fids in move_regions.move_to_origs.items():
@@ -915,8 +923,8 @@ def merge_images(video_name, cropped_images_direc, low_images_direc, move_region
             for region in [low_orig, low_move]:
                 low_x0 = int(region.x * width)
                 low_y0 = int(region.y * height)
-                low_x1 = int((region.x + region.w) * width)
-                low_y1 = int((region.y + region.h) * height)
+                low_x1 = int(region.w * width) + low_x0
+                low_y1 = int(region.h * height) + low_y0
                 c.append([low_x0, low_x1, low_y0, low_y1])
             
 
@@ -926,8 +934,8 @@ def merge_images(video_name, cropped_images_direc, low_images_direc, move_region
                 for region in [high_orig, high_move]:
                     high_x0 = int(region.x * width)
                     high_y0 = int(region.y * height)
-                    high_x1 = int((region.x + region.w) * width)
-                    high_y1 = int((region.y + region.h) * height)
+                    high_x1 = int(region.w * width) + high_x0
+                    high_y1 = int(region.h * height) + high_y0
                     high_c.append([high_x0, high_y0, high_x1, high_y1])
                 high_c.append(low_orig.fid)
                 high_coords.append(high_c)
@@ -1036,6 +1044,8 @@ def combine_rpn_regions(rpn_regions, merge_rpn, merge_thresh):
         extended.y = max(0, rpn.y - rpn.context)
         extended.w = min(1, rpn.x + rpn.w + rpn.context) - extended.x
         extended.h = min(1, rpn.y + rpn.h + rpn.context) - extended.y
+        rpn.shift_x = rpn.x - extended.x
+        rpn.shift_y = rpn.y - extended.y
         extended_regions.append(extended)
         convert_dict[extended] = [rpn]
 
@@ -1204,14 +1214,17 @@ def combine_regions_map(results, padding, images_direc, grouping=None, merge_rpn
                 rects = []
                 if len(orig_regions) > 1:
                     for orig_r in orig_regions:
-                        new_x = float_x - orig_region.x + orig_r.x + padding
-                        new_y = float_y - orig_region.y + orig_r.y + padding
+                        new_x = float_x - orig_region.x + orig_r.x + padding + orig_r.shift_x
+                        new_y = float_y - orig_region.y + orig_r.y + padding + orig_r.shift_y
                         rects.append((b, new_x, new_y, orig_r.w, orig_r.h))
                 else:
                     # Not merging any regions
-                    new_x = float_x + padding
-                    new_y = float_y + padding
+                    new_x = float_x + padding + orig_region.shift_x
+                    new_y = float_y + padding + orig_region.shift_y
+                    #new_x = float_x + padding
+                    #new_y = float_y + padding
                     rects.append((b, new_x, new_y, orig_region.w, orig_region.h))
+                    orig_regions = [orig_region]
 
                 moved_regions = []
                 for idx, orig_r in enumerate(orig_regions):
@@ -1273,7 +1286,7 @@ def crop_matched_region(overlap_region, context, res_region):
 
 
 def convert_move_results(move_results, move_regions, move_to_orig,
-                         iou_thresh, reduced, use_context):
+                         iou_thresh, reduced, use_context, intersect_thresh):
     orig_results = Results()
     orig_bb_to_move = {}
     unmatched_regions = []
@@ -1322,7 +1335,7 @@ def convert_move_results(move_results, move_regions, move_to_orig,
             orig_bb_to_move[orig_bb] = final_res_region
 
             results_to_rpns[orig_res_region] = {orig_region}
-            orig_results.add_single_result(orig_res_region, res_to_rpn=results_to_rpns)
+            orig_results.add_single_result(orig_res_region, intersect_thresh, res_to_rpn=results_to_rpns)
         else:
             unmatched_regions.append((res_region, int(more_than_one)))
 

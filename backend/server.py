@@ -192,7 +192,7 @@ class Server:
             shutil.copy(os.path.join(images_direc, img), merged_images_direc)
 
         merged_images = merge_images(
-            vid_name, merged_images_direc, low_images_direc, move_regions,
+            vid_name, merged_images_direc, low_images_direc, move_regions, req_regions,
             move_to_orig, low_to_high, normalize, debug_mode, start_fid, end_fid)
 
         fnames = [f for f in os.listdir(merged_images_direc) if "png" in f and "_" in f]
@@ -242,7 +242,7 @@ class Server:
 
         r2, orig_bb_to_move, unmatched_regions, res_to_rpn = convert_move_results(
             results_with_detections_only, move_regions, move_to_orig,
-            iou_thresh, reduced, use_context)
+            iou_thresh, reduced, use_context, self.config.intersection_threshold)
 
         if debug_mode:
             #draw_move_boxes(results_with_detections_only, vid_name, start_fid, end_fid)
