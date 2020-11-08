@@ -99,7 +99,7 @@ def main(args):
         logger.info("Reading ground truth results complete")
         tp, fp, fn, _, _, _, f1, tp_bb, fp_bb, fn_bb, tp_corr_gt = evaluate(
             number_of_frames - 1, results.regions_dict, ground_truth_dict,
-            args.low_threshold, 0.5, 0.4, 0.4)
+            args.low_threshold, args.prune_score, args.max_object_size, args.max_object_size)
         stats = (tp, fp, fn)
 
         if mode == "emulation" and args.low_dds_path and args.base_dds_path:

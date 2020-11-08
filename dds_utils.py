@@ -891,9 +891,9 @@ def merge_images(video_name, cropped_images_direc, low_images_direc, move_region
         base = [.485, .456, .406]
         base_im = np.zeros((height, width, col_range))
         if normalize:
-            base_im[:,:,0] = np.uint8(base[0]*255)
+            base_im[:,:,0] = np.uint8(base[2]*255)
             base_im[:,:,1] = np.uint8(base[1]*255)
-            base_im[:,:,2] = np.uint8(base[2]*255)
+            base_im[:,:,2] = np.uint8(base[0]*255)
 
         for orig_fid, high_im in high_images_dict.items():
             if high_im.shape[0] != height or high_im.shape[1] != width:
@@ -905,7 +905,7 @@ def merge_images(video_name, cropped_images_direc, low_images_direc, move_region
         low_images_dict = {}
         for orig_fid in orig_fids:
             fid_name = f'{str(orig_fid).zfill(10)}.png'
-            low_image = cv.imread(os.path.join(low_images_direc, fid_name))
+            low_image = cv.imread(os.path.join(cropped_images_direc, fid_name))
             # enlarge low resolution image
             enlarged_image = cv.resize(low_image, (width, height), fx=0, fy=0,
                                        interpolation=cv.INTER_CUBIC)
@@ -1016,8 +1016,8 @@ def merge_images_base(cropped_images_direc, low_images_direc, req_regions):
                 continue
             x0 = int(r.x * width)
             y0 = int(r.y * height)
-            x1 = int((r.w * width) + x0 - 1)
-            y1 = int((r.h * height) + y0 - 1)
+            x1 = int((r.w * width) + x0)
+            y1 = int((r.h * height) + y0)
 
             enlarged_image[y0:y1, x0:x1, :] = high_image[y0:y1, x0:x1, :]
         cv.imwrite(os.path.join(cropped_images_direc, fname), enlarged_image,
