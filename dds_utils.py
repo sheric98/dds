@@ -960,23 +960,23 @@ def merge_images(video_name, cropped_images_direc, low_images_direc, move_region
             base_im[c[1][2]:c[1][3], c[1][0]:c[1][1], :] =\
                 low_image[c[0][2]:c[0][3], c[0][0]:c[0][1], :]
 
-        # put high-res on top
-        for coords in high_coords:
-            x0, y0, x1, y1 = coords[0]
-            mov_x0, mov_y0, mov_x1, mov_y1 = coords[1]
-            high_image = high_images_dict[coords[2]]
+        # # put high-res on top
+        # for coords in high_coords:
+        #     x0, y0, x1, y1 = coords[0]
+        #     mov_x0, mov_y0, mov_x1, mov_y1 = coords[1]
+        #     high_image = high_images_dict[coords[2]]
 
-            # adjust if necessary
-            if mov_y1 - mov_y0 < y1 - y0:
-                y1 = y0 + mov_y1 - mov_y0
-            elif y1 - y0 < mov_y1 - mov_y0:
-                mov_y1 = mov_y0 + y1 - y0
-            if mov_x1 - mov_x0 < x1 - x0:
-                x1 = x0 + mov_x1 - mov_x0
-            elif x1 - x0 < mov_x1 - mov_x0:
-                mov_x1 = mov_x0 + x1 - x0
+        #     # adjust if necessary
+        #     if mov_y1 - mov_y0 < y1 - y0:
+        #         y1 = y0 + mov_y1 - mov_y0
+        #     elif y1 - y0 < mov_y1 - mov_y0:
+        #         mov_y1 = mov_y0 + y1 - y0
+        #     if mov_x1 - mov_x0 < x1 - x0:
+        #         x1 = x0 + mov_x1 - mov_x0
+        #     elif x1 - x0 < mov_x1 - mov_x0:
+        #         mov_x1 = mov_x0 + x1 - x0
             
-            base_im[mov_y0:mov_y1, mov_x0:mov_x1, :] = high_image[y0:y1, x0:x1, :]
+            #base_im[mov_y0:mov_y1, mov_x0:mov_x1, :] = high_image[y0:y1, x0:x1, :]
         
         # save image
         sorted_origs = sorted(list(orig_fids))
